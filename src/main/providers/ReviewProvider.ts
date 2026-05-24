@@ -1,11 +1,17 @@
 import type {
+  ApprovalAction,
   CommentThread,
+  ExpandLinesRequest,
+  ExpandLinesResponse,
   FileContent,
+  FileDiff,
+  FileDiffEntry,
   FilePair,
   ListPRsFilter,
   PostCommentInput,
   PostReplyInput,
   PRDifferences,
+  PullRequestApprovalView,
   PullRequestDetail,
   PullRequestSummary,
   RepositorySummary,
@@ -41,6 +47,16 @@ export interface ReviewProvider {
     beforeBlobId: string | undefined,
     afterBlobId: string | undefined,
   ): Promise<FilePair>;
+  // Compute hunk-based diff for one file. Sends only changed lines + context,
+  // not the full file content — the renderer never sees unchanged regions
+  // unless the user expands them.
+  getFileDiff(
+    repositoryName: string,
+    entry: FileDiffEntry,
+  ): Promise<FileDiff>;
+  // Returns a slice of one side's blob; used by the "expand context" buttons
+  // between hunks.
+  expandLines(request: ExpandLinesRequest): Promise<ExpandLinesResponse>;
 
   // Comments
   listComments(
@@ -49,6 +65,17 @@ export interface ReviewProvider {
   ): Promise<CommentThread[]>;
   postComment(input: PostCommentInput): Promise<CommentThread>;
   postReply(input: PostReplyInput): Promise<CommentThread>;
+
+  // Approval
+  getApprovalView(
+    repositoryName: string,
+    pullRequestId: string,
+  ): Promise<PullRequestApprovalView>;
+  updateApprovalState(
+    repositoryName: string,
+    pullRequestId: string,
+    action: ApprovalAction,
+  ): Promise<PullRequestApprovalView>;
 }
 
 export interface StaticCredentials {

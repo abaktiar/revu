@@ -21,10 +21,9 @@ interface Props {
   repositoryName: string;
   threads: CommentThread[];
   drafts: CommentDraft[];
-  // Identity changes when threads on the server have been refreshed; we use
-  // this to drop optimistic state without churning on every parent rerender.
   threadsVersion: number;
   postingThreadId: string | null;
+  diffMode: 'inline' | 'split';
   onPostComment: (input: PostCommentInput) => Promise<void>;
   onPostReply: (threadId: string, content: string) => Promise<void>;
   onSaveDraft: (input: {
@@ -44,7 +43,6 @@ interface ZoneRef {
   node: HTMLDivElement;
   root: Root;
   ro: ResizeObserver;
-  // For threads: the threadId; for the composer: undefined.
   threadId?: string;
 }
 
@@ -55,13 +53,27 @@ interface ComposerState {
   initialContent?: string;
 }
 
+// Events we must keep away from Monaco when they originate inside a view zone,
+// otherwise Monaco's editor-level handlers (keybindings, focus management,
+// drag-to-select, etc.) eat keystrokes intended for our textareas/buttons.
+const EVENTS_TO_ISOLATE = [
+  'mousedown',
+  'mouseup',
+  'click',
+  'dblclick',
+  'keydown',
+  'keyup',
+  'keypress',
+  'wheel',
+  'contextmenu',
+] as const;
+
 export function DiffViewer(props: Props): JSX.Element {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const editorRef = useRef<monaco.editor.IStandaloneDiffEditor | null>(null);
   const threadZonesRef = useRef<Map<string, ZoneRef>>(new Map());
   const composerZoneRef = useRef<ZoneRef | null>(null);
   const composerStateRef = useRef<ComposerState | null>(null);
-  // A ref to the latest props so handlers added once still see current data.
   const propsRef = useRef(props);
   propsRef.current = props;
 
@@ -73,7 +85,7 @@ export function DiffViewer(props: Props): JSX.Element {
     const editor = monaco.editor.createDiffEditor(containerRef.current, {
       automaticLayout: true,
       readOnly: true,
-      renderSideBySide: true,
+      renderSideBySide: propsRef.current.diffMode === 'split',
       enableSplitViewResizing: true,
       originalEditable: false,
       scrollBeyondLastLine: false,
@@ -83,6 +95,13 @@ export function DiffViewer(props: Props): JSX.Element {
       lineNumbersMinChars: 4,
       theme: 'vs-dark',
       glyphMargin: true,
+      // VS Code-style collapsed unchanged regions with click-to-expand.
+      hideUnchangedRegions: {
+        enabled: true,
+        revealLineCount: 20,
+        minimumLineCount: 3,
+        contextLineCount: 3,
+      },
     });
     editorRef.current = editor;
 
@@ -120,6 +139,13 @@ export function DiffViewer(props: Props): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ---- Toggle split / inline at runtime ------------------------------
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    editor.updateOptions({ renderSideBySide: props.diffMode === 'split' });
+  }, [props.diffMode]);
+
   // ---- Swap models when file or content changes ----------------------
   useEffect(() => {
     const editor = editorRef.current;
@@ -131,7 +157,6 @@ export function DiffViewer(props: Props): JSX.Element {
     editor.setModel({ original, modified });
     oldOrig?.dispose();
     oldMod?.dispose();
-    // File switched → close composer, rebuild thread zones (handled by next effect).
     closeComposer();
   }, [props.filePath, props.originalText, props.modifiedText, language]);
 
@@ -143,9 +168,6 @@ export function DiffViewer(props: Props): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.threads, props.threadsVersion, props.filePath]);
 
-  // Rerender any existing zones when handlers/state needed by them change
-  // (e.g. postingThreadId). The zone roots read from propsRef, but we still
-  // need to call render() to push fresh props.
   useEffect(() => {
     for (const z of threadZonesRef.current.values()) {
       renderThreadZone(z);
@@ -161,10 +183,7 @@ export function DiffViewer(props: Props): JSX.Element {
     editor: monaco.editor.IStandaloneDiffEditor,
     threads: CommentThread[],
   ): void {
-    // Tear down current thread zones (composer is preserved).
-    for (const z of threadZonesRef.current.values()) {
-      teardownZone(z);
-    }
+    for (const z of threadZonesRef.current.values()) teardownZone(z);
     threadZonesRef.current.clear();
 
     const original = editor.getOriginalEditor();
@@ -172,7 +191,11 @@ export function DiffViewer(props: Props): JSX.Element {
 
     for (const t of threads) {
       if (!t.filePath || !t.filePosition || !t.relativeFileVersion) continue;
-      const targetEditor = t.relativeFileVersion === 'AFTER' ? modified : original;
+      // In inline mode only the modified editor is visible — fall back to it
+      // so the thread stays on screen even if the comment was anchored to BEFORE.
+      const isolatedSide =
+        propsRef.current.diffMode === 'inline' ? 'AFTER' : t.relativeFileVersion;
+      const targetEditor = isolatedSide === 'AFTER' ? modified : original;
       const z = mountZone(
         targetEditor,
         t.filePosition,
@@ -185,7 +208,9 @@ export function DiffViewer(props: Props): JSX.Element {
   }
 
   function renderThreadZone(z: ZoneRef): void {
-    const thread = propsRef.current.threads.find((t) => t.threadId === z.threadId);
+    const thread = propsRef.current.threads.find(
+      (t) => t.threadId === z.threadId,
+    );
     if (!thread) return;
     const posting = propsRef.current.postingThreadId === z.threadId;
     z.root.render(
@@ -203,24 +228,27 @@ export function DiffViewer(props: Props): JSX.Element {
     const editor = editorRef.current;
     if (!editor) return;
     closeComposer();
+    // In inline mode the original editor is hidden — route all composers to modified.
+    const effectiveSide =
+      propsRef.current.diffMode === 'inline' ? 'AFTER' : state.side;
     const target =
-      state.side === 'AFTER'
+      effectiveSide === 'AFTER'
         ? editor.getModifiedEditor()
         : editor.getOriginalEditor();
-    // Find any existing draft for this exact location to prefill.
     const existing = propsRef.current.drafts.find(
       (d) =>
         d.filePath === propsRef.current.filePath &&
         d.filePosition === state.line &&
-        d.relativeFileVersion === state.side,
+        d.relativeFileVersion === effectiveSide,
     );
     const merged: ComposerState = {
       ...state,
+      side: effectiveSide,
       draftId: existing?.id,
       initialContent: existing?.content,
     };
     composerStateRef.current = merged;
-    const z = mountZone(target, state.line, state.side);
+    const z = mountZone(target, state.line, effectiveSide);
     composerZoneRef.current = z;
     renderComposerZone(z, merged);
   }
@@ -275,6 +303,11 @@ export function DiffViewer(props: Props): JSX.Element {
         onCancel={() => closeComposer()}
       />,
     );
+    // Best-effort focus on the textarea once React commits.
+    queueMicrotask(() => {
+      const ta = z.node.querySelector('textarea');
+      if (ta) (ta as HTMLTextAreaElement).focus();
+    });
   }
 
   function mountZone(
@@ -285,6 +318,18 @@ export function DiffViewer(props: Props): JSX.Element {
   ): ZoneRef {
     const node = document.createElement('div');
     node.className = 'view-zone';
+    // Allow programmatic focus on the wrapper if we need it; keep it out of
+    // the natural tab order so Tab still flows through inputs normally.
+    node.tabIndex = -1;
+
+    // Stop ALL UI events from reaching Monaco's editor-level listeners. This
+    // is the fix for the "can't type in composer" bug — Monaco's keybinding
+    // service was swallowing the keystrokes before the textarea saw them.
+    const stop = (e: Event) => e.stopPropagation();
+    for (const evt of EVENTS_TO_ISOLATE) {
+      node.addEventListener(evt, stop);
+    }
+
     const root = createRoot(node);
     let currentId = '';
     let currentHeight = 80;
@@ -309,7 +354,6 @@ export function DiffViewer(props: Props): JSX.Element {
           domNode: node,
         });
       });
-      // Keep our ZoneRef in sync so teardown removes the right one.
       const ref =
         threadId !== undefined
           ? threadZonesRef.current.get(threadId)
@@ -318,15 +362,7 @@ export function DiffViewer(props: Props): JSX.Element {
     });
     ro.observe(node);
 
-    return {
-      id: currentId,
-      side,
-      line,
-      node,
-      root,
-      ro,
-      threadId,
-    };
+    return { id: currentId, side, line, node, root, ro, threadId };
   }
 
   function teardownZone(z: ZoneRef): void {

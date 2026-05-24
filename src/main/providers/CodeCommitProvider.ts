@@ -3,6 +3,7 @@ import {
   EvaluatePullRequestApprovalRulesCommand,
   GetBlobCommand,
   GetCommentsForPullRequestCommand,
+  GetPullRequestApprovalStatesCommand,
   GetPullRequestCommand,
   type Comment as CCComment,
   type CommentsForPullRequest,
@@ -11,18 +12,25 @@ import {
   ListRepositoriesCommand,
   PostCommentForPullRequestCommand,
   PostCommentReplyCommand,
+  UpdatePullRequestApprovalStateCommand,
   type Difference,
   type PullRequest,
   type PullRequestStatusEnum,
   type PullRequestTarget as CCPullRequestTarget,
 } from '@aws-sdk/client-codecommit';
+import { GetCallerIdentityCommand, STSClient } from '@aws-sdk/client-sts';
 import { fromIni, fromNodeProviderChain } from '@aws-sdk/credential-providers';
 import type {
+  ApprovalAction,
   ApprovalState,
+  ApprovalStateEntry,
   CommentNode,
   CommentThread,
   DiffChangeType,
+  ExpandLinesRequest,
+  ExpandLinesResponse,
   FileContent,
+  FileDiff,
   FileDiffEntry,
   FilePair,
   ListPRsFilter,
@@ -31,6 +39,7 @@ import type {
   PostReplyInput,
   PRDifferences,
   PRStatus,
+  PullRequestApprovalView,
   PullRequestDetail,
   PullRequestSummary,
   PullRequestTarget,
@@ -39,9 +48,12 @@ import type {
 } from '@shared/types';
 import {
   decodeFile,
+  looksBinary,
   type ProviderConfig,
   type ReviewProvider,
 } from './ReviewProvider';
+import { computeFileDiff, sliceLines } from '../diff/computeFileDiff';
+import { getCachedBlob, putBlobInCache } from '../diff/blobCache';
 
 const PR_LIST_PAGE_SIZE = 100;
 const DETAIL_FETCH_CONCURRENCY = 8;
@@ -56,6 +68,8 @@ export class CodeCommitProvider implements ReviewProvider {
   readonly name = 'codecommit';
 
   private readonly client: CodeCommitClient;
+  private readonly sts: STSClient;
+  private cachedCallerArn: string | null = null;
 
   constructor(config: ProviderConfig) {
     const credentials = config.staticCredentials
@@ -72,6 +86,7 @@ export class CodeCommitProvider implements ReviewProvider {
       region: config.region,
       credentials,
     });
+    this.sts = new STSClient({ region: config.region, credentials });
   }
 
   // Wrap every SDK call so failures carry the command name + the AWS message,
@@ -231,6 +246,45 @@ export class CodeCommitProvider implements ReviewProvider {
     return { before, after };
   }
 
+  async getFileDiff(
+    repositoryName: string,
+    entry: FileDiffEntry,
+  ): Promise<FileDiff> {
+    const [beforeBytes, afterBytes] = await Promise.all([
+      this.fetchBlobBytes(repositoryName, entry.beforeBlobId),
+      this.fetchBlobBytes(repositoryName, entry.afterBlobId),
+    ]);
+    const binary =
+      (beforeBytes ? looksBinary(beforeBytes) : false) ||
+      (afterBytes ? looksBinary(afterBytes) : false);
+    const beforeText = beforeBytes && !binary ? decodeUtf8(beforeBytes) : null;
+    const afterText = afterBytes && !binary ? decodeUtf8(afterBytes) : null;
+    return computeFileDiff({
+      path: entry.path,
+      beforePath: entry.beforePath,
+      afterPath: entry.afterPath,
+      changeType: entry.changeType,
+      beforeBlobId: entry.beforeBlobId,
+      afterBlobId: entry.afterBlobId,
+      beforeText,
+      afterText,
+      binary,
+    });
+  }
+
+  async expandLines(req: ExpandLinesRequest): Promise<ExpandLinesResponse> {
+    const bytes = await this.fetchBlobBytes(req.repositoryName, req.blobId);
+    if (!bytes) {
+      return { lines: [], fromLine: req.fromLine, toLine: req.toLine };
+    }
+    if (looksBinary(bytes)) {
+      return { lines: [], fromLine: req.fromLine, toLine: req.toLine };
+    }
+    const text = decodeUtf8(bytes);
+    const lines = sliceLines(text, req.fromLine, req.toLine);
+    return { lines, fromLine: req.fromLine, toLine: req.toLine };
+  }
+
   // ---- Comments ---------------------------------------------------------
 
   async listComments(
@@ -333,6 +387,90 @@ export class CodeCommitProvider implements ReviewProvider {
     };
   }
 
+  // ---- Approval ---------------------------------------------------------
+
+  async getApprovalView(
+    repositoryName: string,
+    pullRequestId: string,
+  ): Promise<PullRequestApprovalView> {
+    const pr = await this.getRawPullRequest(pullRequestId);
+    const revisionId = nonEmpty(pr.revisionId);
+    if (!revisionId) {
+      throw new Error(
+        `Pull request ${pullRequestId} has no revisionId — cannot read approvals.`,
+      );
+    }
+    const states = await this.fetchApprovalStates(pullRequestId, revisionId);
+    const selfArn = await this.callerArn();
+    const selfApproved = states.some(
+      (s) => s.userArn === selfArn && s.approvalState === 'APPROVE',
+    );
+    return { revisionId, states, selfApproved, selfArn };
+  }
+
+  async updateApprovalState(
+    repositoryName: string,
+    pullRequestId: string,
+    action: ApprovalAction,
+  ): Promise<PullRequestApprovalView> {
+    const pr = await this.getRawPullRequest(pullRequestId);
+    const revisionId = nonEmpty(pr.revisionId);
+    if (!revisionId) {
+      throw new Error(
+        `Pull request ${pullRequestId} has no revisionId — cannot ${action.toLowerCase()}.`,
+      );
+    }
+    const input = { pullRequestId, revisionId, approvalState: action };
+    await this.cc('UpdatePullRequestApprovalState', input, (i) =>
+      this.client.send(new UpdatePullRequestApprovalStateCommand(i)),
+    );
+    return this.getApprovalView(repositoryName, pullRequestId);
+  }
+
+  private async fetchApprovalStates(
+    pullRequestId: string,
+    revisionId: string,
+  ): Promise<ApprovalStateEntry[]> {
+    const input = { pullRequestId, revisionId };
+    const res = await this.cc('GetPullRequestApprovalStates', input, (i) =>
+      this.client.send(new GetPullRequestApprovalStatesCommand(i)),
+    );
+    return (res.approvals ?? [])
+      .filter(
+        (a): a is { userArn: string; approvalState: 'APPROVE' | 'REVOKE' } =>
+          !!a.userArn && (a.approvalState === 'APPROVE' || a.approvalState === 'REVOKE'),
+      )
+      .map((a) => ({ userArn: a.userArn, approvalState: a.approvalState }));
+  }
+
+  private async callerArn(): Promise<string | undefined> {
+    if (this.cachedCallerArn) return this.cachedCallerArn;
+    try {
+      const res = await this.cc('STS:GetCallerIdentity', {}, () =>
+        this.sts.send(new GetCallerIdentityCommand({})),
+      );
+      if (res.Arn) {
+        this.cachedCallerArn = res.Arn;
+        return res.Arn;
+      }
+    } catch (err) {
+      console.error('[CodeCommit] could not resolve caller ARN:', err);
+    }
+    return undefined;
+  }
+
+  // Internal raw fetch — gives back the SDK shape (with revisionId, etc.).
+  private async getRawPullRequest(pullRequestId: string): Promise<PullRequest> {
+    const input = { pullRequestId };
+    const res = await this.cc('GetPullRequest', input, (i) =>
+      this.client.send(new GetPullRequestCommand(i)),
+    );
+    if (!res.pullRequest) {
+      throw new Error(`Pull request ${pullRequestId} not found`);
+    }
+    return res.pullRequest;
+  }
+
   async postReply(input: PostReplyInput): Promise<CommentThread> {
     const sdkInput = {
       inReplyTo: input.inReplyTo,
@@ -361,13 +499,28 @@ export class CodeCommitProvider implements ReviewProvider {
     repositoryName: string,
     blobId: string | undefined,
   ): Promise<FileContent | null> {
+    const bytes = await this.fetchBlobBytes(repositoryName, blobId);
+    if (!bytes) return null;
+    return decodeFile(bytes);
+  }
+
+  // Returns raw blob bytes, using and populating the in-process LRU cache so
+  // repeated calls (file diff + expand context + post-comment recompute) hit
+  // CodeCommit at most once per blob.
+  private async fetchBlobBytes(
+    repositoryName: string,
+    blobId: string | undefined,
+  ): Promise<Uint8Array | null> {
     if (!blobId) return null;
+    const cached = getCachedBlob(repositoryName, blobId);
+    if (cached) return cached;
     const input = { repositoryName, blobId };
     const res = await this.cc('GetBlob', input, (i) =>
       this.client.send(new GetBlobCommand(i)),
     );
     if (!res.content) return null;
-    return decodeFile(res.content);
+    putBlobInCache(repositoryName, blobId, res.content);
+    return res.content;
   }
 
   private async collectPullRequestIds(
@@ -521,6 +674,10 @@ function mapCommentGroup(
       | undefined,
     comments,
   };
+}
+
+function decodeUtf8(bytes: Uint8Array): string {
+  return new TextDecoder('utf-8', { fatal: false }).decode(bytes);
 }
 
 function nonEmpty(s: string | undefined): string | undefined {

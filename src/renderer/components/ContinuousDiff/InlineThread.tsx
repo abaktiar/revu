@@ -7,11 +7,7 @@ interface Props {
   onReply: (content: string) => Promise<void>;
 }
 
-export function CommentThreadView({
-  thread,
-  posting,
-  onReply,
-}: Props): JSX.Element {
+export function InlineThread({ thread, posting, onReply }: Props): JSX.Element {
   const [replying, setReplying] = useState(false);
   const [text, setText] = useState('');
   const [err, setErr] = useState<string | null>(null);
@@ -45,14 +41,7 @@ export function CommentThreadView({
   }
 
   return (
-    <div className="thread">
-      <div className="thread-head">
-        <span className="thread-loc">
-          {thread.filePath
-            ? `${thread.filePath}:${thread.filePosition} (${thread.relativeFileVersion})`
-            : 'General comment'}
-        </span>
-      </div>
+    <div className="inline-thread">
       <ol className="thread-list">
         {thread.comments.map((c) => (
           <li key={c.id}>

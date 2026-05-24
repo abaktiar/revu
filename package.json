@@ -16,8 +16,11 @@
   },
   "dependencies": {
     "@aws-sdk/client-codecommit": "^3.668.0",
+    "@aws-sdk/client-sts": "^3.1053.0",
     "@aws-sdk/credential-providers": "^3.668.0",
     "@smithy/shared-ini-file-loader": "^3.1.8",
+    "@types/diff": "^7.0.2",
+    "diff": "^9.0.0",
     "monaco-editor": "^0.52.2"
   },
   "devDependencies": {

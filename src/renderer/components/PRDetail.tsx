@@ -1,23 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
+  ApprovalAction,
   CommentDraft,
   CommentThread,
   FileDiffEntry,
-  FilePair,
   PostCommentInput,
   PRDifferences,
+  PullRequestApprovalView,
   PullRequestDetail,
   PullRequestSummary,
   RelativeFileVersion,
+  ReviewedFile,
 } from '@shared/types';
 import { api, unwrap } from '../api';
 import { FileSidebar } from './FileSidebar';
-import { DiffViewer } from './DiffViewer';
-import {
-  isSyntheticBlob,
-  syntheticDifferences,
-  syntheticFilePair,
-} from '../syntheticDiff';
+import { ContinuousDiff, type ContinuousDiffHandle } from './ContinuousDiff/ContinuousDiff';
 
 interface Props {
   repositoryName: string;
@@ -32,116 +29,49 @@ export function PRDetail({
 }: Props): JSX.Element {
   const [detail, setDetail] = useState<PullRequestDetail | null>(null);
   const [differences, setDifferences] = useState<PRDifferences | null>(null);
-  const [selected, setSelected] = useState<FileDiffEntry | null>(null);
-  const [filePair, setFilePair] = useState<FilePair | null>(null);
-  const [pairLoading, setPairLoading] = useState(false);
-  const [pairError, setPairError] = useState<string | null>(null);
+  const [activeFile, setActiveFile] = useState<string | null>(null);
   const [threads, setThreads] = useState<CommentThread[]>([]);
-  const [threadsVersion, setThreadsVersion] = useState(0);
   const [drafts, setDrafts] = useState<CommentDraft[]>([]);
+  const [reviewed, setReviewed] = useState<ReviewedFile[]>([]);
+  const [approval, setApproval] = useState<PullRequestApprovalView | null>(null);
+  const [approvalBusy, setApprovalBusy] = useState(false);
   const [postingThreadId, setPostingThreadId] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [synthetic, setSynthetic] = useState(false);
-  // Cache of file pairs keyed by `${beforeBlobId}|${afterBlobId}` so switching
-  // files we've already viewed doesn't refetch.
-  const pairCache = useRef<Map<string, FilePair>>(new Map());
+  const [showGeneral, setShowGeneral] = useState(false);
+  const diffRef = useRef<ContinuousDiffHandle | null>(null);
 
-  // ---- Load PR detail + differences + comments + drafts ---------------
+  // ---- Load PR data ---------------------------------------------------
   useEffect(() => {
-    if (synthetic) {
-      const diff = syntheticDifferences();
-      setDifferences(diff);
-      setDetail({
-        ...pullRequest,
-        description: 'Synthetic 50k-line diff fixture (Monaco perf check).',
-      });
-      const f = diff.files[0];
-      if (f) setSelected(f);
-      setThreads([]);
-      setDrafts([]);
-      setLoadError(null);
-      return;
-    }
-
     let cancelled = false;
     setLoadError(null);
     setDifferences(null);
-    setSelected(null);
-    setFilePair(null);
-    pairCache.current.clear();
+    setActiveFile(null);
 
     Promise.all([
       unwrap(api.prs.get(repositoryName, pullRequest.id)),
       unwrap(api.prs.differences(repositoryName, pullRequest.id)),
       unwrap(api.comments.list(repositoryName, pullRequest.id)),
       unwrap(api.drafts.list(pullRequest.id)),
+      unwrap(api.reviewed.list(pullRequest.id)),
+      unwrap(api.approval.get(repositoryName, pullRequest.id)).catch(() => null),
     ])
-      .then(([d, diff, th, dr]) => {
+      .then(([d, diff, th, dr, rv, app]) => {
         if (cancelled) return;
         setDetail(d);
         setDifferences(diff);
         setThreads(th);
-        setThreadsVersion((v) => v + 1);
         setDrafts(dr);
-        // Auto-select first file (or first file that has comments).
-        const firstWithComments = diff.files.find((f) =>
-          th.some((t) => t.filePath === f.path),
-        );
-        setSelected(firstWithComments ?? diff.files[0] ?? null);
+        setReviewed(rv);
+        setApproval(app);
       })
       .catch((err: Error) => !cancelled && setLoadError(err.message));
 
     return () => {
       cancelled = true;
     };
-  }, [repositoryName, pullRequest.id, synthetic]);
+  }, [repositoryName, pullRequest.id]);
 
-  // ---- Lazy-load the selected file's content --------------------------
-  useEffect(() => {
-    if (!selected) {
-      setFilePair(null);
-      return;
-    }
-    const cacheKey = `${selected.beforeBlobId ?? ''}|${selected.afterBlobId ?? ''}`;
-    const cached = pairCache.current.get(cacheKey);
-    if (cached) {
-      setFilePair(cached);
-      setPairError(null);
-      return;
-    }
-    setPairLoading(true);
-    setPairError(null);
-    let cancelled = false;
-
-    const fetcher = synthetic || isSyntheticBlob(selected.afterBlobId)
-      ? Promise.resolve(syntheticFilePair())
-      : unwrap(
-          api.prs.filePair(
-            repositoryName,
-            selected.beforeBlobId,
-            selected.afterBlobId,
-          ),
-        );
-
-    fetcher
-      .then((pair) => {
-        if (cancelled) return;
-        pairCache.current.set(cacheKey, pair);
-        setFilePair(pair);
-      })
-      .catch((err: Error) => {
-        if (cancelled) return;
-        setPairError(err.message);
-        setFilePair(null);
-      })
-      .finally(() => !cancelled && setPairLoading(false));
-
-    return () => {
-      cancelled = true;
-    };
-  }, [selected, repositoryName, synthetic]);
-
-  // ---- Comment counts per file (for sidebar badge) --------------------
+  // ---- Derived state --------------------------------------------------
   const commentCounts = useMemo(() => {
     const out: Record<string, number> = {};
     for (const t of threads) {
@@ -151,15 +81,15 @@ export function PRDetail({
     return out;
   }, [threads]);
 
-  const threadsForFile = useMemo(() => {
-    if (!selected) return [];
-    return threads.filter((t) => t.filePath === selected.path);
-  }, [threads, selected]);
-
-  const draftsForFile = useMemo(() => {
-    if (!selected) return [];
-    return drafts.filter((d) => d.filePath === selected.path);
-  }, [drafts, selected]);
+  const reviewedPaths = useMemo(() => {
+    if (!differences) return new Set<string>();
+    const current = differences.afterCommitId;
+    return new Set(
+      reviewed
+        .filter((r) => r.reviewedAtAfterCommit === current)
+        .map((r) => r.filePath),
+    );
+  }, [reviewed, differences]);
 
   const generalComments = useMemo(
     () => threads.filter((t) => !t.filePath),
@@ -173,7 +103,6 @@ export function PRDetail({
         api.comments.list(repositoryName, pullRequest.id),
       );
       setThreads(fresh);
-      setThreadsVersion((v) => v + 1);
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : String(err));
     }
@@ -238,15 +167,79 @@ export function PRDetail({
     setDrafts((cur) => cur.filter((d) => d.id !== id));
   }, []);
 
+  const toggleReviewed = useCallback(
+    async (file: FileDiffEntry, next: boolean): Promise<void> => {
+      if (!differences) return;
+      try {
+        const entry = await unwrap(
+          api.reviewed.toggle(
+            pullRequest.id,
+            file.path,
+            differences.afterCommitId,
+            next,
+          ),
+        );
+        setReviewed((cur) => {
+          const filtered = cur.filter((r) => r.filePath !== file.path);
+          return entry ? [...filtered, entry] : filtered;
+        });
+      } catch (err) {
+        setLoadError(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [differences, pullRequest.id],
+  );
+
+  const applyApproval = useCallback(
+    async (action: ApprovalAction): Promise<void> => {
+      setApprovalBusy(true);
+      try {
+        const next = await unwrap(
+          api.approval.update(repositoryName, pullRequest.id, action),
+        );
+        setApproval(next);
+        const fresh = await unwrap(api.prs.get(repositoryName, pullRequest.id));
+        setDetail(fresh);
+      } catch (err) {
+        setLoadError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setApprovalBusy(false);
+      }
+    },
+    [repositoryName, pullRequest.id],
+  );
+
+  // ---- Keyboard navigation -------------------------------------------
+  useEffect(() => {
+    function onKey(e: KeyboardEvent): void {
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if (e.key === 'j') {
+        e.preventDefault();
+        diffRef.current?.scrollToFileBy(1);
+      } else if (e.key === 'k') {
+        e.preventDefault();
+        diffRef.current?.scrollToFileBy(-1);
+      }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   if (loadError) {
     return (
       <div className="pr-detail">
         <Toolbar
           pr={pullRequest}
           detail={detail}
+          approval={approval}
+          approvalBusy={approvalBusy}
+          onApprove={() => void applyApproval('APPROVE')}
+          onRevoke={() => void applyApproval('REVOKE')}
           onBack={onBack}
-          synthetic={synthetic}
-          onToggleSynthetic={() => setSynthetic((v) => !v)}
+          generalCount={generalComments.length}
+          showGeneral={showGeneral}
+          onToggleGeneral={() => setShowGeneral((v) => !v)}
         />
         <div className="error">
           <div>Could not load PR data.</div>
@@ -262,9 +255,14 @@ export function PRDetail({
         <Toolbar
           pr={pullRequest}
           detail={detail}
+          approval={approval}
+          approvalBusy={approvalBusy}
+          onApprove={() => void applyApproval('APPROVE')}
+          onRevoke={() => void applyApproval('REVOKE')}
           onBack={onBack}
-          synthetic={synthetic}
-          onToggleSynthetic={() => setSynthetic((v) => !v)}
+          generalCount={generalComments.length}
+          showGeneral={showGeneral}
+          onToggleGeneral={() => setShowGeneral((v) => !v)}
         />
         <div className="loading">Loading PR…</div>
       </div>
@@ -276,75 +274,63 @@ export function PRDetail({
       <Toolbar
         pr={pullRequest}
         detail={detail}
+        approval={approval}
+        approvalBusy={approvalBusy}
+        onApprove={() => void applyApproval('APPROVE')}
+        onRevoke={() => void applyApproval('REVOKE')}
         onBack={onBack}
-        synthetic={synthetic}
-        onToggleSynthetic={() => setSynthetic((v) => !v)}
+        generalCount={generalComments.length}
+        showGeneral={showGeneral}
+        onToggleGeneral={() => setShowGeneral((v) => !v)}
       />
       <div className="pr-body">
         <FileSidebar
           files={differences.files}
-          selectedPath={selected?.path}
+          selectedPath={activeFile ?? undefined}
           commentCounts={commentCounts}
-          onSelect={(f) => setSelected(f)}
+          reviewedPaths={reviewedPaths}
+          onSelect={(f) =>
+            diffRef.current?.scrollToFile(f.path, {
+              behavior: 'smooth',
+              block: 'start',
+            })
+          }
+          onToggleReviewed={(f, next) => void toggleReviewed(f, next)}
         />
         <div className="diff-area">
-          {selected ? (
-            <>
-              <div className="file-bar">
-                <span className={`ct ct-${selected.changeType}`}>
-                  {selected.changeType}
-                </span>
-                <span className="path">{selected.path}</span>
-                {selected.beforePath &&
-                  selected.afterPath &&
-                  selected.beforePath !== selected.afterPath && (
-                    <span className="hint">
-                      ← {selected.beforePath}
-                    </span>
-                  )}
-                <span className="grow" />
-                {draftsForFile.length > 0 && (
-                  <span className="hint">
-                    {draftsForFile.length} draft
-                    {draftsForFile.length === 1 ? '' : 's'} in file
-                  </span>
-                )}
-              </div>
-              {pairError ? (
-                <div className="error">
-                  <pre>{pairError}</pre>
-                </div>
-              ) : pairLoading || !filePair ? (
-                <div className="loading">Loading file…</div>
-              ) : filePair.before?.binary || filePair.after?.binary ? (
-                <div className="empty">Binary file — diff not rendered.</div>
-              ) : (
-                <DiffViewer
-                  filePath={selected.path}
-                  originalText={filePair.before?.text ?? ''}
-                  modifiedText={filePair.after?.text ?? ''}
-                  beforeCommitId={differences.beforeCommitId}
-                  afterCommitId={differences.afterCommitId}
-                  pullRequestId={pullRequest.id}
-                  repositoryName={repositoryName}
-                  threads={threadsForFile}
-                  drafts={draftsForFile}
-                  threadsVersion={threadsVersion}
-                  postingThreadId={postingThreadId}
-                  onPostComment={postComment}
-                  onPostReply={postReply}
-                  onSaveDraft={saveDraft}
-                  onDeleteDraft={deleteDraft}
-                />
-              )}
-            </>
-          ) : (
+          {differences.files.length === 0 ? (
             <div className="empty">No files changed.</div>
+          ) : (
+            <ContinuousDiff
+              ref={diffRef}
+              files={differences.files}
+              threads={threads}
+              drafts={drafts}
+              reviewedPaths={reviewedPaths}
+              ctx={{
+                pullRequestId: pullRequest.id,
+                repositoryName,
+                beforeCommitId: differences.beforeCommitId,
+                afterCommitId: differences.afterCommitId,
+                postingThreadId,
+              }}
+              callbacks={{
+                onPostComment: postComment,
+                onPostReply: postReply,
+                onSaveDraft: saveDraft,
+                onDeleteDraft: deleteDraft,
+                onToggleReviewed: (f, next) => void toggleReviewed(f, next),
+              }}
+              onActiveFileChange={setActiveFile}
+            />
           )}
         </div>
-        {generalComments.length > 0 && (
+        {showGeneral && generalComments.length > 0 && (
           <aside className="general-comments">
-            <h3>General comments</h3>
+            <div className="general-head">
+              <h3>General comments ({generalComments.length})</h3>
+              <button onClick={() => setShowGeneral(false)}>×</button>
+            </div>
             {generalComments.map((t) => (
               <div key={t.threadId} className="thread thread-flat">
                 {t.comments.map((c) => (
@@ -368,16 +354,28 @@ export function PRDetail({
 function Toolbar({
   pr,
   detail,
+  approval,
+  approvalBusy,
+  onApprove,
+  onRevoke,
   onBack,
-  synthetic,
-  onToggleSynthetic,
+  generalCount,
+  showGeneral,
+  onToggleGeneral,
 }: {
   pr: PullRequestSummary;
   detail: PullRequestDetail | null;
+  approval: PullRequestApprovalView | null;
+  approvalBusy: boolean;
+  onApprove: () => void;
+  onRevoke: () => void;
   onBack: () => void;
-  synthetic: boolean;
-  onToggleSynthetic: () => void;
+  generalCount: number;
+  showGeneral: boolean;
+  onToggleGeneral: () => void;
 }): JSX.Element {
+  const approvedCount =
+    approval?.states.filter((s) => s.approvalState === 'APPROVE').length ?? 0;
   return (
     <div className="pr-toolbar">
       <button onClick={onBack}>← Back</button>
@@ -392,10 +390,27 @@ function Toolbar({
           </span>
         </>
       )}
+      {approval && (
+        <span className="hint">
+          {approvedCount} approval{approvedCount === 1 ? '' : 's'}
+        </span>
+      )}
       <span className="grow" />
-      <button onClick={onToggleSynthetic} title="Load a synthetic 50k-line diff to verify Monaco scroll performance">
-        {synthetic ? 'Exit synthetic' : 'Load synthetic 50k diff'}
-      </button>
+      {generalCount > 0 && (
+        <button onClick={onToggleGeneral}>
+          {showGeneral ? 'Hide' : 'Show'} general ({generalCount})
+        </button>
+      )}
+      {approval &&
+        (approval.selfApproved ? (
+          <button onClick={onRevoke} disabled={approvalBusy}>
+            {approvalBusy ? 'Revoking…' : 'Revoke approval'}
+          </button>
+        ) : (
+          <button className="primary" onClick={onApprove} disabled={approvalBusy}>
+            {approvalBusy ? 'Approving…' : 'Approve'}
+          </button>
+        ))}
     </div>
   );
 }

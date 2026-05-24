@@ -1,9 +1,14 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
   AppSettings,
+  ApprovalAction,
   AwsProfileInfo,
   CommentDraft,
   CommentThread,
+  ExpandLinesRequest,
+  ExpandLinesResponse,
+  FileDiff,
+  FileDiffEntry,
   FilePair,
   IpcResult,
   ListPRsFilter,
@@ -11,10 +16,12 @@ import type {
   PostCommentInput,
   PostReplyInput,
   PRDifferences,
+  PullRequestApprovalView,
   PullRequestDetail,
   PullRequestSummary,
   RelativeFileVersion,
   RepositorySummary,
+  ReviewedFile,
 } from '@shared/types';
 
 const CH = {
@@ -28,12 +35,18 @@ const CH = {
   prsGet: 'prs:get',
   prsDifferences: 'prs:differences',
   prsFilePair: 'prs:file-pair',
+  prsFileDiff: 'prs:file-diff',
+  prsExpandLines: 'prs:expand-lines',
   commentsList: 'comments:list',
   commentsPost: 'comments:post',
   commentsReply: 'comments:reply',
   draftsList: 'drafts:list',
   draftsSave: 'drafts:save',
   draftsDelete: 'drafts:delete',
+  approvalGet: 'approval:get',
+  approvalUpdate: 'approval:update',
+  reviewedList: 'reviewed:list',
+  reviewedToggle: 'reviewed:toggle',
 } as const;
 
 const api = {
@@ -79,6 +92,15 @@ const api = {
       afterBlobId: string | undefined,
     ): Promise<IpcResult<FilePair>> =>
       ipcRenderer.invoke(CH.prsFilePair, repositoryName, beforeBlobId, afterBlobId),
+    fileDiff: (
+      repositoryName: string,
+      entry: FileDiffEntry,
+    ): Promise<IpcResult<FileDiff>> =>
+      ipcRenderer.invoke(CH.prsFileDiff, repositoryName, entry),
+    expandLines: (
+      request: ExpandLinesRequest,
+    ): Promise<IpcResult<ExpandLinesResponse>> =>
+      ipcRenderer.invoke(CH.prsExpandLines, request),
   },
   comments: {
     list: (
@@ -107,6 +129,36 @@ const api = {
       ipcRenderer.invoke(CH.draftsSave, input),
     delete: (id: string): Promise<IpcResult<void>> =>
       ipcRenderer.invoke(CH.draftsDelete, id),
+  },
+  approval: {
+    get: (
+      repositoryName: string,
+      pullRequestId: string,
+    ): Promise<IpcResult<PullRequestApprovalView>> =>
+      ipcRenderer.invoke(CH.approvalGet, repositoryName, pullRequestId),
+    update: (
+      repositoryName: string,
+      pullRequestId: string,
+      action: ApprovalAction,
+    ): Promise<IpcResult<PullRequestApprovalView>> =>
+      ipcRenderer.invoke(CH.approvalUpdate, repositoryName, pullRequestId, action),
+  },
+  reviewed: {
+    list: (pullRequestId: string): Promise<IpcResult<ReviewedFile[]>> =>
+      ipcRenderer.invoke(CH.reviewedList, pullRequestId),
+    toggle: (
+      pullRequestId: string,
+      filePath: string,
+      afterCommitId: string,
+      reviewed: boolean,
+    ): Promise<IpcResult<ReviewedFile | null>> =>
+      ipcRenderer.invoke(
+        CH.reviewedToggle,
+        pullRequestId,
+        filePath,
+        afterCommitId,
+        reviewed,
+      ),
   },
 } as const;
 

@@ -138,6 +138,62 @@ export interface FilePair {
   after: FileContent | null;
 }
 
+// ---- Hunk-based diff (GitHub-style continuous renderer) ---------------
+
+export type DiffLineType = 'context' | 'add' | 'del';
+
+export interface DiffLine {
+  type: DiffLineType;
+  // Line numbers in the BEFORE / AFTER files (1-based). undefined where the
+  // side has no corresponding line: oldLineNumber is set for context+del,
+  // newLineNumber is set for context+add.
+  oldLineNumber?: number;
+  newLineNumber?: number;
+  content: string; // raw line content (no leading +/-/space)
+}
+
+export interface DiffHunk {
+  // 1-based starts. Lines counts come from the diff library.
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  lines: DiffLine[];
+  // Synthetic hunks injected by "expand context" are flagged so the renderer
+  // doesn't draw a hunk header for them.
+  isExpansion?: boolean;
+}
+
+export interface FileDiff {
+  path: string;
+  beforePath?: string;
+  afterPath?: string;
+  changeType: DiffChangeType;
+  beforeBlobId?: string;
+  afterBlobId?: string;
+  // True when either side was detected as binary; hunks will be empty.
+  binary: boolean;
+  // Line totals on each side; used to clamp "expand context" requests.
+  oldTotalLines: number;
+  newTotalLines: number;
+  hunks: DiffHunk[];
+}
+
+export interface ExpandLinesRequest {
+  repositoryName: string;
+  blobId: string;
+  side: 'before' | 'after';
+  // 1-based inclusive line range to fetch.
+  fromLine: number;
+  toLine: number;
+}
+
+export interface ExpandLinesResponse {
+  lines: string[]; // raw line content
+  fromLine: number;
+  toLine: number;
+}
+
 // ---- Comment types ------------------------------------------------------
 
 export type RelativeFileVersion = 'BEFORE' | 'AFTER';
@@ -195,6 +251,34 @@ export interface CommentDraft {
   createdAt: string; // ISO
   // If set, this draft will be posted as a reply rather than a new thread.
   inReplyTo?: string;
+}
+
+// ---- Approval / identity ----------------------------------------------
+
+export type ApprovalAction = 'APPROVE' | 'REVOKE';
+
+export interface ApprovalStateEntry {
+  userArn: string;
+  approvalState: 'APPROVE' | 'REVOKE';
+}
+
+export interface PullRequestApprovalView {
+  revisionId: string;
+  states: ApprovalStateEntry[];
+  // Whether the *currently authenticated* user has APPROVE on this revision.
+  selfApproved: boolean;
+  selfArn?: string;
+}
+
+// ---- Per-file local review state --------------------------------------
+
+export interface ReviewedFile {
+  pullRequestId: string;
+  filePath: string;
+  // The afterCommitId at the time the user marked this file. If the PR's
+  // current afterCommitId differs, the reviewed flag is considered stale.
+  reviewedAtAfterCommit: string;
+  reviewedAt: string; // ISO
 }
 
 // Result envelope used by every IPC call so the renderer can render errors

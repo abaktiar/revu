@@ -14,7 +14,7 @@ interface Props {
   onCancel: () => void;
 }
 
-export function CommentComposer({
+export function InlineComposer({
   side,
   filePath,
   line,
@@ -30,20 +30,12 @@ export function CommentComposer({
   const [err, setErr] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
-  // Focus + place caret at the end whenever the composer mounts. The view-zone
-  // host sometimes loses focus to Monaco between createRoot and render commit,
-  // so we re-attempt on the next animation frame too.
   useEffect(() => {
-    const focus = (): void => {
-      const ta = textareaRef.current;
-      if (!ta) return;
-      ta.focus();
-      const end = ta.value.length;
-      ta.setSelectionRange(end, end);
-    };
-    focus();
-    const raf = requestAnimationFrame(focus);
-    return () => cancelAnimationFrame(raf);
+    const ta = textareaRef.current;
+    if (!ta) return;
+    ta.focus();
+    const end = ta.value.length;
+    ta.setSelectionRange(end, end);
   }, []);
 
   async function wrap(fn: () => Promise<void>): Promise<void> {
@@ -56,7 +48,6 @@ export function CommentComposer({
   }
 
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>): void {
-    // Cmd/Ctrl+Enter posts; Esc cancels.
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
       e.preventDefault();
       if (text.trim() && !posting) void wrap(() => onPost(text));
@@ -67,8 +58,8 @@ export function CommentComposer({
   }
 
   return (
-    <div className="composer">
-      <div className="composer-head">
+    <div className="inline-composer">
+      <div className="inline-composer-head">
         <span>
           New comment · <code>{filePath}</code>:<b>{line}</b> · {side}
         </span>
@@ -80,13 +71,13 @@ export function CommentComposer({
       </div>
       <textarea
         ref={textareaRef}
-        rows={5}
+        rows={4}
         value={text}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={onKeyDown}
         placeholder="Leave a comment…"
       />
-      <div className="composer-actions">
+      <div className="inline-composer-actions">
         {err && <span className="hint warn">{err}</span>}
         <span className="grow" />
         {draftId && (

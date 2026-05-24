@@ -1,9 +1,14 @@
 import { ipcMain } from 'electron';
 import type {
   AppSettings,
+  ApprovalAction,
   AwsProfileInfo,
   CommentDraft,
   CommentThread,
+  ExpandLinesRequest,
+  ExpandLinesResponse,
+  FileDiff,
+  FileDiffEntry,
   FilePair,
   IpcResult,
   ListPRsFilter,
@@ -11,10 +16,12 @@ import type {
   PostCommentInput,
   PostReplyInput,
   PRDifferences,
+  PullRequestApprovalView,
   PullRequestDetail,
   PullRequestSummary,
   RelativeFileVersion,
   RepositorySummary,
+  ReviewedFile,
 } from '@shared/types';
 import { CodeCommitProvider } from './providers/CodeCommitProvider';
 import type { ReviewProvider } from './providers/ReviewProvider';
@@ -27,6 +34,7 @@ import {
   saveSettings,
 } from './settings';
 import { deleteDraft, listDrafts, saveDraft } from './drafts';
+import { listReviewed, setReviewed } from './reviewed';
 
 export const IPC = {
   settingsGet: 'settings:get',
@@ -39,12 +47,18 @@ export const IPC = {
   prsGet: 'prs:get',
   prsDifferences: 'prs:differences',
   prsFilePair: 'prs:file-pair',
+  prsFileDiff: 'prs:file-diff',
+  prsExpandLines: 'prs:expand-lines',
   commentsList: 'comments:list',
   commentsPost: 'comments:post',
   commentsReply: 'comments:reply',
   draftsList: 'drafts:list',
   draftsSave: 'drafts:save',
   draftsDelete: 'drafts:delete',
+  approvalGet: 'approval:get',
+  approvalUpdate: 'approval:update',
+  reviewedList: 'reviewed:list',
+  reviewedToggle: 'reviewed:toggle',
 } as const;
 
 let provider: ReviewProvider | null = null;
@@ -234,6 +248,37 @@ export function registerIpc(): void {
     },
   );
 
+  ipcMain.handle(
+    IPC.prsFileDiff,
+    async (
+      _e,
+      repositoryName: string,
+      entry: FileDiffEntry,
+    ): Promise<IpcResult<FileDiff>> => {
+      try {
+        const p = await getProvider();
+        return ok(await p.getFileDiff(repositoryName, entry));
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IPC.prsExpandLines,
+    async (
+      _e,
+      request: ExpandLinesRequest,
+    ): Promise<IpcResult<ExpandLinesResponse>> => {
+      try {
+        const p = await getProvider();
+        return ok(await p.expandLines(request));
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
   // ---- comments -------------------------------------------------------
   ipcMain.handle(
     IPC.commentsList,
@@ -322,6 +367,73 @@ export function registerIpc(): void {
       try {
         await deleteDraft(id);
         return ok(undefined);
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  // ---- approvals ------------------------------------------------------
+  ipcMain.handle(
+    IPC.approvalGet,
+    async (
+      _e,
+      repositoryName: string,
+      pullRequestId: string,
+    ): Promise<IpcResult<PullRequestApprovalView>> => {
+      try {
+        const p = await getProvider();
+        return ok(await p.getApprovalView(repositoryName, pullRequestId));
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IPC.approvalUpdate,
+    async (
+      _e,
+      repositoryName: string,
+      pullRequestId: string,
+      action: ApprovalAction,
+    ): Promise<IpcResult<PullRequestApprovalView>> => {
+      try {
+        const p = await getProvider();
+        return ok(
+          await p.updateApprovalState(repositoryName, pullRequestId, action),
+        );
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  // ---- reviewed files -------------------------------------------------
+  ipcMain.handle(
+    IPC.reviewedList,
+    async (_e, pullRequestId: string): Promise<IpcResult<ReviewedFile[]>> => {
+      try {
+        return ok(await listReviewed(pullRequestId));
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IPC.reviewedToggle,
+    async (
+      _e,
+      pullRequestId: string,
+      filePath: string,
+      afterCommitId: string,
+      reviewed: boolean,
+    ): Promise<IpcResult<ReviewedFile | null>> => {
+      try {
+        return ok(
+          await setReviewed(pullRequestId, filePath, afterCommitId, reviewed),
+        );
       } catch (err) {
         return fail(err);
       }
