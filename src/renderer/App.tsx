@@ -8,12 +8,17 @@ import {
   type FilterState,
 } from './components/PRFilters';
 import { PRList } from './components/PRList';
+import { PRDetail } from './components/PRDetail';
 
 const DEFAULT_FILTERS: FilterState = {
   status: 'OPEN',
   approval: 'ALL',
   search: '',
 };
+
+type View =
+  | { kind: 'list' }
+  | { kind: 'detail'; pr: PullRequestSummary };
 
 export function App(): JSX.Element {
   const [settings, setSettings] = useState<AppSettings | null>(null);
@@ -22,9 +27,8 @@ export function App(): JSX.Element {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [view, setView] = useState<View>({ kind: 'list' });
 
-  // Load persisted settings once on mount, then auto-open the settings panel
-  // if the user hasn't finished configuring yet.
   useEffect(() => {
     unwrap(api.settings.get())
       .then((s) => {
@@ -85,6 +89,18 @@ export function App(): JSX.Element {
     return <div className="loading">Loading settings…</div>;
   }
 
+  if (view.kind === 'detail' && settings.repositoryName) {
+    return (
+      <div className="app">
+        <PRDetail
+          repositoryName={settings.repositoryName}
+          pullRequest={view.pr}
+          onBack={() => setView({ kind: 'list' })}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="app">
       <div className="topbar">
@@ -123,7 +139,7 @@ export function App(): JSX.Element {
               : 'Finish configuring credentials, region, and repository in Settings.'}
           </div>
         ) : (
-          <PRList prs={visible} />
+          <PRList prs={visible} onOpen={(pr) => setView({ kind: 'detail', pr })} />
         )}
       </div>
     </div>
@@ -136,7 +152,7 @@ function SettingsSummary({ settings }: { settings: AppSettings }): JSX.Element {
       ? settings.hasManualKeys
         ? 'keys ✓'
         : 'keys (not set)'
-      : settings.profile ?? 'default chain';
+      : (settings.profile ?? 'default chain');
   const parts = [
     credLabel,
     settings.region ?? 'no region',

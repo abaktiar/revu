@@ -45,7 +45,11 @@ export function PRList({ prs, onOpen }: Props): JSX.Element {
       </thead>
       <tbody>
         {sorted.map((pr) => (
-          <tr key={pr.id} onDoubleClick={() => onOpen?.(pr)}>
+          <tr
+            key={pr.id}
+            className="clickable"
+            onClick={() => onOpen?.(pr)}
+          >
             <td className="id">#{pr.id}</td>
             <td>{pr.title}</td>
             <td className="id">{shortArn(pr.authorArn)}</td>

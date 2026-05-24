@@ -1,9 +1,17 @@
 import {
   CodeCommitClient,
   EvaluatePullRequestApprovalRulesCommand,
+  GetBlobCommand,
+  GetCommentsForPullRequestCommand,
   GetPullRequestCommand,
+  type Comment as CCComment,
+  type CommentsForPullRequest,
+  GetDifferencesCommand,
   ListPullRequestsCommand,
   ListRepositoriesCommand,
+  PostCommentForPullRequestCommand,
+  PostCommentReplyCommand,
+  type Difference,
   type PullRequest,
   type PullRequestStatusEnum,
   type PullRequestTarget as CCPullRequestTarget,
@@ -11,18 +19,38 @@ import {
 import { fromIni, fromNodeProviderChain } from '@aws-sdk/credential-providers';
 import type {
   ApprovalState,
+  CommentNode,
+  CommentThread,
+  DiffChangeType,
+  FileContent,
+  FileDiffEntry,
+  FilePair,
   ListPRsFilter,
   MergeState,
+  PostCommentInput,
+  PostReplyInput,
+  PRDifferences,
   PRStatus,
   PullRequestDetail,
   PullRequestSummary,
   PullRequestTarget,
+  RelativeFileVersion,
   RepositorySummary,
 } from '@shared/types';
-import type { ProviderConfig, ReviewProvider } from './ReviewProvider';
+import {
+  decodeFile,
+  type ProviderConfig,
+  type ReviewProvider,
+} from './ReviewProvider';
 
 const PR_LIST_PAGE_SIZE = 100;
 const DETAIL_FETCH_CONCURRENCY = 8;
+// CodeCommit GetDifferences caps MaxResults at 400. Anything higher is rejected
+// with "A valid limit is between 1 and 400".
+const DIFF_PAGE_SIZE = 400;
+
+// Set DEBUG_CODECOMMIT=1 to log every CodeCommit call's name + inputs.
+const DEBUG = process.env.DEBUG_CODECOMMIT === '1';
 
 export class CodeCommitProvider implements ReviewProvider {
   readonly name = 'codecommit';
@@ -46,12 +74,37 @@ export class CodeCommitProvider implements ReviewProvider {
     });
   }
 
+  // Wrap every SDK call so failures carry the command name + the AWS message,
+  // and so we always know which API rejected us. Also logs to the main-process
+  // console so it shows in the `npm run dev` terminal.
+  private async cc<TIn extends object, TOut>(
+    name: string,
+    input: TIn,
+    send: (i: TIn) => Promise<TOut>,
+  ): Promise<TOut> {
+    if (DEBUG) console.log(`[CodeCommit ${name}] →`, sanitizeForLog(input));
+    try {
+      return await send(input);
+    } catch (err) {
+      const aws = err instanceof Error ? err.message : String(err);
+      console.error(
+        `[CodeCommit ${name}] ✗ ${aws}\n  input=${JSON.stringify(sanitizeForLog(input))}`,
+      );
+      throw new Error(
+        `[${name}] ${aws} (input: ${JSON.stringify(sanitizeForLog(input))})`,
+      );
+    }
+  }
+
+  // ---- Repos ------------------------------------------------------------
+
   async listRepositories(): Promise<RepositorySummary[]> {
     const out: RepositorySummary[] = [];
     let nextToken: string | undefined;
     do {
-      const res = await this.client.send(
-        new ListRepositoriesCommand({ nextToken }),
+      const input = { nextToken };
+      const res = await this.cc('ListRepositories', input, (i) =>
+        this.client.send(new ListRepositoriesCommand(i)),
       );
       for (const r of res.repositories ?? []) {
         if (r.repositoryName) {
@@ -63,6 +116,8 @@ export class CodeCommitProvider implements ReviewProvider {
     out.sort((a, b) => a.name.localeCompare(b.name));
     return out;
   }
+
+  // ---- PRs --------------------------------------------------------------
 
   async listPullRequests(
     repositoryName: string,
@@ -76,14 +131,243 @@ export class CodeCommitProvider implements ReviewProvider {
     _repositoryName: string,
     pullRequestId: string,
   ): Promise<PullRequestDetail> {
-    const res = await this.client.send(
-      new GetPullRequestCommand({ pullRequestId }),
+    const input = { pullRequestId };
+    const res = await this.cc('GetPullRequest', input, (i) =>
+      this.client.send(new GetPullRequestCommand(i)),
     );
     if (!res.pullRequest) {
       throw new Error(`Pull request ${pullRequestId} not found`);
     }
     const approvalState = await this.evaluateApproval(res.pullRequest);
     return mapPullRequest(res.pullRequest, approvalState);
+  }
+
+  // ---- Diffs ------------------------------------------------------------
+
+  async getDifferences(
+    repositoryName: string,
+    pullRequestId: string,
+  ): Promise<PRDifferences> {
+    const pr = await this.getPullRequest(repositoryName, pullRequestId);
+    const target =
+      pr.targets.find(
+        (t) => t.repositoryName.toLowerCase() === repositoryName.toLowerCase(),
+      ) ?? pr.targets[0];
+    if (!target) {
+      throw new Error(`Pull request ${pullRequestId} has no targets.`);
+    }
+
+    const afterCommit = nonEmpty(target.sourceCommitId);
+    // mergeBase shows only PR-introduced changes; falls back to destination
+    // tip if AWS hasn't computed the merge base yet. CodeCommit sometimes
+    // returns mergeBase as an empty string, so `??` alone is not enough.
+    const beforeCommit =
+      nonEmpty(target.mergeBase) ?? nonEmpty(target.destinationCommitId);
+
+    // Always log the resolved commits so we can verify they're real values,
+    // not empty strings, when diagnosing diff-load failures.
+    console.log(
+      `[CodeCommit getDifferences] pullRequestId=${pullRequestId} ` +
+        `repo=${repositoryName} ` +
+        `sourceRef=${target.sourceReference} destRef=${target.destinationReference} ` +
+        `sourceCommitId=${j(target.sourceCommitId)} ` +
+        `destinationCommitId=${j(target.destinationCommitId)} ` +
+        `mergeBase=${j(target.mergeBase)} ` +
+        `→ before=${j(beforeCommit)} after=${j(afterCommit)}`,
+    );
+
+    if (!afterCommit) {
+      throw new Error(
+        `Pull request ${pullRequestId} has no source commit id ` +
+          `(sourceReference=${target.sourceReference}, raw sourceCommitId=${j(target.sourceCommitId)}).`,
+      );
+    }
+    if (!beforeCommit) {
+      throw new Error(
+        `Pull request ${pullRequestId} has no destination/merge-base commit id ` +
+          `(destinationReference=${target.destinationReference}, ` +
+          `raw destinationCommitId=${j(target.destinationCommitId)}, ` +
+          `raw mergeBase=${j(target.mergeBase)}).`,
+      );
+    }
+
+    const diffs: Difference[] = [];
+    let nextToken: string | undefined;
+    do {
+      const input = {
+        repositoryName,
+        beforeCommitSpecifier: beforeCommit,
+        afterCommitSpecifier: afterCommit,
+        MaxResults: DIFF_PAGE_SIZE,
+        NextToken: nextToken,
+      };
+      const res = await this.cc('GetDifferences', input, (i) =>
+        this.client.send(new GetDifferencesCommand(i)),
+      );
+      diffs.push(...(res.differences ?? []));
+      nextToken = res.NextToken;
+    } while (nextToken);
+
+    const files = diffs.map(mapDifference);
+    files.sort((a, b) => a.path.localeCompare(b.path));
+    return {
+      pullRequestId,
+      repositoryName,
+      beforeCommitId: beforeCommit,
+      afterCommitId: afterCommit,
+      files,
+    };
+  }
+
+  async getFilePair(
+    repositoryName: string,
+    beforeBlobId: string | undefined,
+    afterBlobId: string | undefined,
+  ): Promise<FilePair> {
+    const [before, after] = await Promise.all([
+      this.fetchBlob(repositoryName, beforeBlobId),
+      this.fetchBlob(repositoryName, afterBlobId),
+    ]);
+    return { before, after };
+  }
+
+  // ---- Comments ---------------------------------------------------------
+
+  async listComments(
+    repositoryName: string,
+    pullRequestId: string,
+  ): Promise<CommentThread[]> {
+    // CodeCommit's GetCommentsForPullRequest requires beforeCommitId and
+    // afterCommitId in practice (the docs say "optional" but the service
+    // returns CommitIdRequiredException when they're omitted). Derive them
+    // from the PR target — same commits the diff viewer uses.
+    const { beforeCommitId, afterCommitId } =
+      await this.resolveCommits(repositoryName, pullRequestId);
+
+    const raw: CommentsForPullRequest[] = [];
+    let nextToken: string | undefined;
+    do {
+      const input = {
+        pullRequestId,
+        repositoryName,
+        beforeCommitId,
+        afterCommitId,
+        nextToken,
+      };
+      const res = await this.cc('GetCommentsForPullRequest', input, (i) =>
+        this.client.send(new GetCommentsForPullRequestCommand(i)),
+      );
+      raw.push(...(res.commentsForPullRequestData ?? []));
+      nextToken = res.nextToken;
+    } while (nextToken);
+
+    return raw
+      .map((g) => mapCommentGroup(g, pullRequestId, repositoryName))
+      .filter((t): t is CommentThread => t !== null);
+  }
+
+  private async resolveCommits(
+    repositoryName: string,
+    pullRequestId: string,
+  ): Promise<{ beforeCommitId: string; afterCommitId: string }> {
+    const pr = await this.getPullRequest(repositoryName, pullRequestId);
+    const target =
+      pr.targets.find(
+        (t) => t.repositoryName.toLowerCase() === repositoryName.toLowerCase(),
+      ) ?? pr.targets[0];
+    if (!target) {
+      throw new Error(`Pull request ${pullRequestId} has no targets.`);
+    }
+    const afterCommitId = nonEmpty(target.sourceCommitId);
+    const beforeCommitId =
+      nonEmpty(target.mergeBase) ?? nonEmpty(target.destinationCommitId);
+    if (!afterCommitId || !beforeCommitId) {
+      throw new Error(
+        `Pull request ${pullRequestId} is missing commit ids ` +
+          `(sourceCommitId=${j(target.sourceCommitId)}, ` +
+          `destinationCommitId=${j(target.destinationCommitId)}, ` +
+          `mergeBase=${j(target.mergeBase)}).`,
+      );
+    }
+    return { beforeCommitId, afterCommitId };
+  }
+
+  async postComment(input: PostCommentInput): Promise<CommentThread> {
+    const before = nonEmpty(input.beforeCommitId);
+    const after = nonEmpty(input.afterCommitId);
+    if (!before || !after) {
+      throw new Error(
+        `postComment requires non-empty beforeCommitId and afterCommitId ` +
+          `(before=${j(input.beforeCommitId)} after=${j(input.afterCommitId)})`,
+      );
+    }
+    const sdkInput = {
+      pullRequestId: input.pullRequestId,
+      repositoryName: input.repositoryName,
+      beforeCommitId: before,
+      afterCommitId: after,
+      content: input.content,
+      location: {
+        filePath: input.filePath,
+        filePosition: input.filePosition,
+        relativeFileVersion: input.relativeFileVersion,
+      },
+    };
+    const res = await this.cc('PostCommentForPullRequest', sdkInput, (i) =>
+      this.client.send(new PostCommentForPullRequestCommand(i)),
+    );
+    const comment = res.comment;
+    if (!comment?.commentId) {
+      throw new Error('CodeCommit did not return the new comment.');
+    }
+    return {
+      threadId: comment.commentId,
+      pullRequestId: input.pullRequestId,
+      repositoryName: input.repositoryName,
+      beforeCommitId: before,
+      afterCommitId: after,
+      filePath: input.filePath,
+      filePosition: input.filePosition,
+      relativeFileVersion: input.relativeFileVersion,
+      comments: [mapComment(comment)],
+    };
+  }
+
+  async postReply(input: PostReplyInput): Promise<CommentThread> {
+    const sdkInput = {
+      inReplyTo: input.inReplyTo,
+      content: input.content,
+    };
+    const res = await this.cc('PostCommentReply', sdkInput, (i) =>
+      this.client.send(new PostCommentReplyCommand(i)),
+    );
+    const comment = res.comment;
+    if (!comment?.commentId) {
+      throw new Error('CodeCommit did not return the reply comment.');
+    }
+    return {
+      threadId: input.inReplyTo,
+      pullRequestId: '',
+      repositoryName: '',
+      beforeCommitId: '',
+      afterCommitId: '',
+      comments: [mapComment(comment)],
+    };
+  }
+
+  // ---- internals --------------------------------------------------------
+
+  private async fetchBlob(
+    repositoryName: string,
+    blobId: string | undefined,
+  ): Promise<FileContent | null> {
+    if (!blobId) return null;
+    const input = { repositoryName, blobId };
+    const res = await this.cc('GetBlob', input, (i) =>
+      this.client.send(new GetBlobCommand(i)),
+    );
+    if (!res.content) return null;
+    return decodeFile(res.content);
   }
 
   private async collectPullRequestIds(
@@ -93,13 +377,14 @@ export class CodeCommitProvider implements ReviewProvider {
     const ids: string[] = [];
     let nextToken: string | undefined;
     do {
-      const res = await this.client.send(
-        new ListPullRequestsCommand({
-          repositoryName,
-          pullRequestStatus: status as PullRequestStatusEnum | undefined,
-          maxResults: PR_LIST_PAGE_SIZE,
-          nextToken,
-        }),
+      const input = {
+        repositoryName,
+        pullRequestStatus: status as PullRequestStatusEnum | undefined,
+        maxResults: PR_LIST_PAGE_SIZE,
+        nextToken,
+      };
+      const res = await this.cc('ListPullRequests', input, (i) =>
+        this.client.send(new ListPullRequestsCommand(i)),
       );
       if (res.pullRequestIds) ids.push(...res.pullRequestIds);
       nextToken = res.nextToken;
@@ -113,8 +398,9 @@ export class CodeCommitProvider implements ReviewProvider {
       const batch = ids.slice(i, i + DETAIL_FETCH_CONCURRENCY);
       const results = await Promise.all(
         batch.map(async (id) => {
-          const res = await this.client.send(
-            new GetPullRequestCommand({ pullRequestId: id }),
+          const input = { pullRequestId: id };
+          const res = await this.cc('GetPullRequest', input, (inp) =>
+            this.client.send(new GetPullRequestCommand(inp)),
           );
           if (!res.pullRequest) return null;
           const approvalState = await this.evaluateApproval(res.pullRequest);
@@ -135,15 +421,16 @@ export class CodeCommitProvider implements ReviewProvider {
     if (!id || !revisionId) return 'UNKNOWN';
     if (rules.length === 0) return 'NO_RULES';
     try {
-      const res = await this.client.send(
-        new EvaluatePullRequestApprovalRulesCommand({
-          pullRequestId: id,
-          revisionId,
-        }),
+      const input = { pullRequestId: id, revisionId };
+      const res = await this.cc(
+        'EvaluatePullRequestApprovalRules',
+        input,
+        (i) =>
+          this.client.send(new EvaluatePullRequestApprovalRulesCommand(i)),
       );
       return res.evaluation?.approved ? 'APPROVED' : 'NOT_APPROVED';
     } catch {
-      // Evaluation can fail (e.g. revision mismatch). Don't kill the whole list.
+      // Approval evaluation is best-effort — never let it kill the PR list load.
       return 'UNKNOWN';
     }
   }
@@ -179,5 +466,98 @@ function mapTarget(t: CCPullRequestTarget): PullRequestTarget {
     sourceCommitId: t.sourceCommit,
     destinationCommitId: t.destinationCommit,
     mergeBase: t.mergeBase,
+  };
+}
+
+function mapDifference(d: Difference): FileDiffEntry {
+  const ct = mapChangeType(d.changeType);
+  const beforePath = d.beforeBlob?.path;
+  const afterPath = d.afterBlob?.path;
+  const path =
+    ct === 'D'
+      ? (beforePath ?? afterPath ?? '?')
+      : (afterPath ?? beforePath ?? '?');
+  return {
+    path,
+    beforePath,
+    afterPath,
+    changeType: ct,
+    beforeBlobId: d.beforeBlob?.blobId,
+    afterBlobId: d.afterBlob?.blobId,
+  };
+}
+
+function mapChangeType(ct: string | undefined): DiffChangeType {
+  switch (ct) {
+    case 'A':
+      return 'A';
+    case 'D':
+      return 'D';
+    case 'R':
+      return 'R';
+    case 'M':
+    default:
+      return 'M';
+  }
+}
+
+function mapCommentGroup(
+  g: CommentsForPullRequest,
+  pullRequestId: string,
+  repositoryName: string,
+): CommentThread | null {
+  const comments = (g.comments ?? []).map(mapComment);
+  if (comments.length === 0) return null;
+  return {
+    threadId: comments[0]?.id ?? `t-${Math.random()}`,
+    pullRequestId,
+    repositoryName,
+    beforeCommitId: g.beforeCommitId ?? '',
+    afterCommitId: g.afterCommitId ?? '',
+    filePath: g.location?.filePath,
+    filePosition: g.location?.filePosition,
+    relativeFileVersion: g.location?.relativeFileVersion as
+      | RelativeFileVersion
+      | undefined,
+    comments,
+  };
+}
+
+function nonEmpty(s: string | undefined): string | undefined {
+  if (s === undefined || s === null) return undefined;
+  const trimmed = s.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function j(v: unknown): string {
+  if (v === undefined) return 'undefined';
+  if (v === null) return 'null';
+  if (typeof v === 'string') return `"${v}"`;
+  return String(v);
+}
+
+// Strip values that could be sensitive (credentials, large blobs) from log output.
+function sanitizeForLog<T>(input: T): T {
+  if (!input || typeof input !== 'object') return input;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(input as Record<string, unknown>)) {
+    if (k === 'content' && typeof v === 'string' && v.length > 80) {
+      out[k] = `<string len=${v.length}>`;
+    } else {
+      out[k] = v;
+    }
+  }
+  return out as T;
+}
+
+function mapComment(c: CCComment): CommentNode {
+  return {
+    id: c.commentId ?? '',
+    authorArn: c.authorArn,
+    content: c.content ?? '',
+    inReplyTo: c.inReplyTo,
+    createdAt: c.creationDate?.toISOString(),
+    lastModified: c.lastModifiedDate?.toISOString(),
+    deleted: c.deleted,
   };
 }

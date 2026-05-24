@@ -2,16 +2,21 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type {
   AppSettings,
   AwsProfileInfo,
+  CommentDraft,
+  CommentThread,
+  FilePair,
   IpcResult,
   ListPRsFilter,
   ManualCredentialsInput,
+  PostCommentInput,
+  PostReplyInput,
+  PRDifferences,
   PullRequestDetail,
   PullRequestSummary,
+  RelativeFileVersion,
   RepositorySummary,
 } from '@shared/types';
 
-// Mirrors src/main/ipc.ts. Kept as string literals here so the preload bundle
-// has no main-process imports.
 const CH = {
   settingsGet: 'settings:get',
   settingsSet: 'settings:set',
@@ -21,6 +26,14 @@ const CH = {
   reposList: 'repos:list',
   prsList: 'prs:list',
   prsGet: 'prs:get',
+  prsDifferences: 'prs:differences',
+  prsFilePair: 'prs:file-pair',
+  commentsList: 'comments:list',
+  commentsPost: 'comments:post',
+  commentsReply: 'comments:reply',
+  draftsList: 'drafts:list',
+  draftsSave: 'drafts:save',
+  draftsDelete: 'drafts:delete',
 } as const;
 
 const api = {
@@ -55,6 +68,45 @@ const api = {
       pullRequestId: string,
     ): Promise<IpcResult<PullRequestDetail>> =>
       ipcRenderer.invoke(CH.prsGet, repositoryName, pullRequestId),
+    differences: (
+      repositoryName: string,
+      pullRequestId: string,
+    ): Promise<IpcResult<PRDifferences>> =>
+      ipcRenderer.invoke(CH.prsDifferences, repositoryName, pullRequestId),
+    filePair: (
+      repositoryName: string,
+      beforeBlobId: string | undefined,
+      afterBlobId: string | undefined,
+    ): Promise<IpcResult<FilePair>> =>
+      ipcRenderer.invoke(CH.prsFilePair, repositoryName, beforeBlobId, afterBlobId),
+  },
+  comments: {
+    list: (
+      repositoryName: string,
+      pullRequestId: string,
+    ): Promise<IpcResult<CommentThread[]>> =>
+      ipcRenderer.invoke(CH.commentsList, repositoryName, pullRequestId),
+    post: (input: PostCommentInput): Promise<IpcResult<CommentThread>> =>
+      ipcRenderer.invoke(CH.commentsPost, input),
+    reply: (input: PostReplyInput): Promise<IpcResult<CommentThread>> =>
+      ipcRenderer.invoke(CH.commentsReply, input),
+  },
+  drafts: {
+    list: (pullRequestId: string): Promise<IpcResult<CommentDraft[]>> =>
+      ipcRenderer.invoke(CH.draftsList, pullRequestId),
+    save: (input: {
+      id?: string;
+      pullRequestId: string;
+      repositoryName: string;
+      filePath: string;
+      filePosition: number;
+      relativeFileVersion: RelativeFileVersion;
+      content: string;
+      inReplyTo?: string;
+    }): Promise<IpcResult<CommentDraft>> =>
+      ipcRenderer.invoke(CH.draftsSave, input),
+    delete: (id: string): Promise<IpcResult<void>> =>
+      ipcRenderer.invoke(CH.draftsDelete, id),
   },
 } as const;
 

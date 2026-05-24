@@ -2,11 +2,18 @@ import { ipcMain } from 'electron';
 import type {
   AppSettings,
   AwsProfileInfo,
+  CommentDraft,
+  CommentThread,
+  FilePair,
   IpcResult,
   ListPRsFilter,
   ManualCredentialsInput,
+  PostCommentInput,
+  PostReplyInput,
+  PRDifferences,
   PullRequestDetail,
   PullRequestSummary,
+  RelativeFileVersion,
   RepositorySummary,
 } from '@shared/types';
 import { CodeCommitProvider } from './providers/CodeCommitProvider';
@@ -19,8 +26,8 @@ import {
   saveManualCredentials,
   saveSettings,
 } from './settings';
+import { deleteDraft, listDrafts, saveDraft } from './drafts';
 
-// Channel name constants — single source of truth shared with preload.
 export const IPC = {
   settingsGet: 'settings:get',
   settingsSet: 'settings:set',
@@ -30,6 +37,14 @@ export const IPC = {
   reposList: 'repos:list',
   prsList: 'prs:list',
   prsGet: 'prs:get',
+  prsDifferences: 'prs:differences',
+  prsFilePair: 'prs:file-pair',
+  commentsList: 'comments:list',
+  commentsPost: 'comments:post',
+  commentsReply: 'comments:reply',
+  draftsList: 'drafts:list',
+  draftsSave: 'drafts:save',
+  draftsDelete: 'drafts:delete',
 } as const;
 
 let provider: ReviewProvider | null = null;
@@ -72,7 +87,8 @@ async function getProvider(): Promise<ReviewProvider> {
 
   provider = new CodeCommitProvider({
     region: settings.region,
-    profile: settings.credentialSource === 'profile' ? settings.profile : undefined,
+    profile:
+      settings.credentialSource === 'profile' ? settings.profile : undefined,
     staticCredentials: creds ?? undefined,
   });
   providerKey = key;
@@ -80,6 +96,7 @@ async function getProvider(): Promise<ReviewProvider> {
 }
 
 export function registerIpc(): void {
+  // ---- settings -------------------------------------------------------
   ipcMain.handle(IPC.settingsGet, async (): Promise<IpcResult<AppSettings>> => {
     try {
       return ok(await loadSettings());
@@ -117,19 +134,17 @@ export function registerIpc(): void {
     },
   );
 
-  ipcMain.handle(
-    IPC.credsClear,
-    async (): Promise<IpcResult<AppSettings>> => {
-      try {
-        await clearManualCredentials();
-        invalidateProvider();
-        return ok(await loadSettings());
-      } catch (err) {
-        return fail(err);
-      }
-    },
-  );
+  ipcMain.handle(IPC.credsClear, async (): Promise<IpcResult<AppSettings>> => {
+    try {
+      await clearManualCredentials();
+      invalidateProvider();
+      return ok(await loadSettings());
+    } catch (err) {
+      return fail(err);
+    }
+  });
 
+  // ---- aws / repos / prs ----------------------------------------------
   ipcMain.handle(
     IPC.awsListProfiles,
     async (): Promise<IpcResult<AwsProfileInfo[]>> => {
@@ -180,6 +195,133 @@ export function registerIpc(): void {
       try {
         const p = await getProvider();
         return ok(await p.getPullRequest(repositoryName, pullRequestId));
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IPC.prsDifferences,
+    async (
+      _e,
+      repositoryName: string,
+      pullRequestId: string,
+    ): Promise<IpcResult<PRDifferences>> => {
+      try {
+        const p = await getProvider();
+        return ok(await p.getDifferences(repositoryName, pullRequestId));
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IPC.prsFilePair,
+    async (
+      _e,
+      repositoryName: string,
+      beforeBlobId: string | undefined,
+      afterBlobId: string | undefined,
+    ): Promise<IpcResult<FilePair>> => {
+      try {
+        const p = await getProvider();
+        return ok(await p.getFilePair(repositoryName, beforeBlobId, afterBlobId));
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  // ---- comments -------------------------------------------------------
+  ipcMain.handle(
+    IPC.commentsList,
+    async (
+      _e,
+      repositoryName: string,
+      pullRequestId: string,
+    ): Promise<IpcResult<CommentThread[]>> => {
+      try {
+        const p = await getProvider();
+        return ok(await p.listComments(repositoryName, pullRequestId));
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IPC.commentsPost,
+    async (
+      _e,
+      input: PostCommentInput,
+    ): Promise<IpcResult<CommentThread>> => {
+      try {
+        const p = await getProvider();
+        return ok(await p.postComment(input));
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IPC.commentsReply,
+    async (
+      _e,
+      input: PostReplyInput,
+    ): Promise<IpcResult<CommentThread>> => {
+      try {
+        const p = await getProvider();
+        return ok(await p.postReply(input));
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  // ---- drafts ---------------------------------------------------------
+  ipcMain.handle(
+    IPC.draftsList,
+    async (_e, pullRequestId: string): Promise<IpcResult<CommentDraft[]>> => {
+      try {
+        return ok(await listDrafts(pullRequestId));
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IPC.draftsSave,
+    async (
+      _e,
+      input: {
+        id?: string;
+        pullRequestId: string;
+        repositoryName: string;
+        filePath: string;
+        filePosition: number;
+        relativeFileVersion: RelativeFileVersion;
+        content: string;
+        inReplyTo?: string;
+      },
+    ): Promise<IpcResult<CommentDraft>> => {
+      try {
+        return ok(await saveDraft(input));
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IPC.draftsDelete,
+    async (_e, id: string): Promise<IpcResult<void>> => {
+      try {
+        await deleteDraft(id);
+        return ok(undefined);
       } catch (err) {
         return fail(err);
       }

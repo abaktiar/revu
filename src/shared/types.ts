@@ -103,6 +103,100 @@ export interface RepositorySummary {
   id?: string;
 }
 
+// ---- Diff types ---------------------------------------------------------
+
+export type DiffChangeType = 'A' | 'M' | 'D' | 'R';
+
+export interface FileDiffEntry {
+  // The "current" path the user sees in the file tree. For deletes this is
+  // the path on the BEFORE side; otherwise the AFTER path.
+  path: string;
+  beforePath?: string;
+  afterPath?: string;
+  changeType: DiffChangeType;
+  beforeBlobId?: string;
+  afterBlobId?: string;
+}
+
+export interface PRDifferences {
+  pullRequestId: string;
+  repositoryName: string;
+  beforeCommitId: string;
+  afterCommitId: string;
+  files: FileDiffEntry[];
+}
+
+export interface FileContent {
+  // Decoded UTF-8 text. Empty when binary === true.
+  text: string;
+  binary: boolean;
+  size: number;
+}
+
+export interface FilePair {
+  before: FileContent | null; // null = file didn't exist on that side
+  after: FileContent | null;
+}
+
+// ---- Comment types ------------------------------------------------------
+
+export type RelativeFileVersion = 'BEFORE' | 'AFTER';
+
+export interface CommentNode {
+  id: string;
+  authorArn?: string;
+  content: string;
+  inReplyTo?: string;
+  createdAt?: string;
+  lastModified?: string;
+  deleted?: boolean;
+}
+
+export interface CommentThread {
+  // CodeCommit groups comments by (commitIds + location); we use the first
+  // comment's id as the thread id for stable React keys.
+  threadId: string;
+  pullRequestId: string;
+  repositoryName: string;
+  beforeCommitId: string;
+  afterCommitId: string;
+  filePath?: string; // undefined => general PR comment
+  filePosition?: number; // 1-based line number
+  relativeFileVersion?: RelativeFileVersion;
+  comments: CommentNode[];
+}
+
+export interface PostCommentInput {
+  pullRequestId: string;
+  repositoryName: string;
+  beforeCommitId: string;
+  afterCommitId: string;
+  filePath: string;
+  filePosition: number;
+  relativeFileVersion: RelativeFileVersion;
+  content: string;
+}
+
+export interface PostReplyInput {
+  inReplyTo: string;
+  content: string;
+}
+
+// ---- Drafts -------------------------------------------------------------
+
+export interface CommentDraft {
+  id: string; // local UUID
+  pullRequestId: string;
+  repositoryName: string;
+  filePath: string;
+  filePosition: number;
+  relativeFileVersion: RelativeFileVersion;
+  content: string;
+  createdAt: string; // ISO
+  // If set, this draft will be posted as a reply rather than a new thread.
+  inReplyTo?: string;
+}
+
 // Result envelope used by every IPC call so the renderer can render errors
 // uniformly without try/catch around every invoke.
 export type IpcResult<T> =
