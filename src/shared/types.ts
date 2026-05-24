@@ -270,6 +270,38 @@ export interface PullRequestApprovalView {
   selfArn?: string;
 }
 
+// ---- Mergeability -----------------------------------------------------
+
+export type MergeOptionId =
+  | 'FAST_FORWARD_MERGE'
+  | 'SQUASH_MERGE'
+  | 'THREE_WAY_MERGE';
+
+export type MergeabilityState =
+  // Auto-mergeable — at least one strategy applies cleanly.
+  | 'mergeable'
+  // PR was already merged.
+  | 'already_merged'
+  // Merge would conflict on at least one file; manual resolution needed.
+  | 'has_conflicts'
+  // Couldn't determine — surface `reason` to the user.
+  | 'unknown';
+
+export interface PullRequestMergeability {
+  state: MergeabilityState;
+  // Strategies CodeCommit says are *available* (whether they'd actually merge
+  // cleanly is a separate question answered by `state`).
+  mergeOptions: MergeOptionId[];
+  // Conflict info when state === 'has_conflicts'.
+  conflictCount?: number;
+  conflictFiles?: string[]; // up to ~10 file paths
+  // Merge info when state === 'already_merged'.
+  mergedBy?: string;
+  mergeCommitId?: string;
+  // Why we landed in this state (especially for 'unknown' or 'has_conflicts').
+  reason?: string;
+}
+
 // ---- Per-file local review state --------------------------------------
 
 export interface ReviewedFile {

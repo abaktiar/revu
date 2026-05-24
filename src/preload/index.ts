@@ -18,6 +18,7 @@ import type {
   PRDifferences,
   PullRequestApprovalView,
   PullRequestDetail,
+  PullRequestMergeability,
   PullRequestSummary,
   RelativeFileVersion,
   RepositorySummary,
@@ -45,6 +46,7 @@ const CH = {
   draftsDelete: 'drafts:delete',
   approvalGet: 'approval:get',
   approvalUpdate: 'approval:update',
+  mergeabilityGet: 'mergeability:get',
   reviewedList: 'reviewed:list',
   reviewedToggle: 'reviewed:toggle',
 } as const;
@@ -142,6 +144,13 @@ const api = {
       action: ApprovalAction,
     ): Promise<IpcResult<PullRequestApprovalView>> =>
       ipcRenderer.invoke(CH.approvalUpdate, repositoryName, pullRequestId, action),
+  },
+  mergeability: {
+    get: (
+      repositoryName: string,
+      pullRequestId: string,
+    ): Promise<IpcResult<PullRequestMergeability>> =>
+      ipcRenderer.invoke(CH.mergeabilityGet, repositoryName, pullRequestId),
   },
   reviewed: {
     list: (pullRequestId: string): Promise<IpcResult<ReviewedFile[]>> =>

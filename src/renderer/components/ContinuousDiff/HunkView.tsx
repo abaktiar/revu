@@ -1,10 +1,11 @@
-import { Fragment } from 'react';
+import { Fragment, useMemo } from 'react';
 import type {
   CommentThread,
   DiffHunk,
   DiffLine,
   RelativeFileVersion,
 } from '@shared/types';
+import { highlightLine, languageForPath } from '../../highlight';
 import { InlineThread } from './InlineThread';
 import { InlineComposer } from './InlineComposer';
 import {
@@ -39,6 +40,14 @@ export function HunkView({
   onOpenComposer,
   onCloseComposer,
 }: Props): JSX.Element {
+  // Highlight every line in this hunk once; the result is memoized as long as
+  // the hunk identity is stable (which it is — hunks are immutable values
+  // produced in main).
+  const language = useMemo(() => languageForPath(filePath), [filePath]);
+  const highlighted = useMemo(() => {
+    return hunk.lines.map((l) => highlightLine(l.content, language));
+  }, [hunk, language]);
+
   return (
     <>
       {!hunk.isExpansion && (
@@ -71,6 +80,7 @@ export function HunkView({
           <Fragment key={`${hunk.oldStart}:${hunk.newStart}:${i}`}>
             <DiffLineRow
               line={line}
+              highlightedHtml={highlighted[i] ?? ''}
               onAdd={
                 lineForClick
                   ? () =>
@@ -120,12 +130,16 @@ export function HunkView({
 
 function DiffLineRow({
   line,
+  highlightedHtml,
   onAdd,
 }: {
   line: DiffLine;
+  highlightedHtml: string;
   onAdd?: () => void;
 }): JSX.Element {
   const marker = line.type === 'add' ? '+' : line.type === 'del' ? '-' : ' ';
+  // Empty lines should still take a row's worth of vertical space.
+  const html = highlightedHtml.length > 0 ? highlightedHtml : '&nbsp;';
   return (
     <div className={`drow drow-${line.type}`}>
       <div className="dgutter old">
@@ -142,9 +156,10 @@ function DiffLineRow({
       </div>
       <div className="dgutter new">{line.newLineNumber ?? ''}</div>
       <div className="dmark">{marker}</div>
-      <div className="dcontent">
-        {line.content === '' ? ' ' : line.content}
-      </div>
+      <div
+        className="dcontent hljs"
+        dangerouslySetInnerHTML={{ __html: html }}
+      />
     </div>
   );
 }

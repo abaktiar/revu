@@ -18,6 +18,7 @@ import type {
   PRDifferences,
   PullRequestApprovalView,
   PullRequestDetail,
+  PullRequestMergeability,
   PullRequestSummary,
   RelativeFileVersion,
   RepositorySummary,
@@ -57,6 +58,7 @@ export const IPC = {
   draftsDelete: 'drafts:delete',
   approvalGet: 'approval:get',
   approvalUpdate: 'approval:update',
+  mergeabilityGet: 'mergeability:get',
   reviewedList: 'reviewed:list',
   reviewedToggle: 'reviewed:toggle',
 } as const;
@@ -403,6 +405,22 @@ export function registerIpc(): void {
         return ok(
           await p.updateApprovalState(repositoryName, pullRequestId, action),
         );
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IPC.mergeabilityGet,
+    async (
+      _e,
+      repositoryName: string,
+      pullRequestId: string,
+    ): Promise<IpcResult<PullRequestMergeability>> => {
+      try {
+        const p = await getProvider();
+        return ok(await p.getMergeability(repositoryName, pullRequestId));
       } catch (err) {
         return fail(err);
       }

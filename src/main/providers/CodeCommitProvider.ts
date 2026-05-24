@@ -3,6 +3,8 @@ import {
   EvaluatePullRequestApprovalRulesCommand,
   GetBlobCommand,
   GetCommentsForPullRequestCommand,
+  GetMergeConflictsCommand,
+  GetMergeOptionsCommand,
   GetPullRequestApprovalStatesCommand,
   GetPullRequestCommand,
   type Comment as CCComment,
@@ -34,6 +36,7 @@ import type {
   FileDiffEntry,
   FilePair,
   ListPRsFilter,
+  MergeOptionId,
   MergeState,
   PostCommentInput,
   PostReplyInput,
@@ -41,6 +44,7 @@ import type {
   PRStatus,
   PullRequestApprovalView,
   PullRequestDetail,
+  PullRequestMergeability,
   PullRequestSummary,
   PullRequestTarget,
   RelativeFileVersion,
@@ -406,6 +410,106 @@ export class CodeCommitProvider implements ReviewProvider {
       (s) => s.userArn === selfArn && s.approvalState === 'APPROVE',
     );
     return { revisionId, states, selfApproved, selfArn };
+  }
+
+async getMergeability(
+    repositoryName: string,
+    pullRequestId: string,
+  ): Promise<PullRequestMergeability> {
+    const pr = await this.getRawPullRequest(pullRequestId);
+    const target =
+      (pr.pullRequestTargets ?? []).find(
+        (t) =>
+          (t.repositoryName ?? '').toLowerCase() ===
+          repositoryName.toLowerCase(),
+      ) ?? pr.pullRequestTargets?.[0];
+
+    if (target?.mergeMetadata?.isMerged === true) {
+      return {
+        state: 'already_merged',
+        mergeOptions: [],
+        mergedBy: target.mergeMetadata.mergedBy,
+        mergeCommitId: target.mergeMetadata.mergeCommitId,
+      };
+    }
+
+    const destinationCommit = nonEmpty(target?.destinationCommit);
+    const sourceCommit = nonEmpty(target?.sourceCommit);
+    if (!destinationCommit || !sourceCommit) {
+      return {
+        state: 'unknown',
+        mergeOptions: [],
+        reason: 'PR is missing source/destination commit ids.',
+      };
+    }
+
+    // Step 1: ask CodeCommit which strategies are available. GetMergeOptions
+    // throws ManualMergeRequiredException when there's no way to auto-merge
+    // (which usually means conflicts in every strategy).
+    let strategies: MergeOptionId[] = [];
+    try {
+      const res = await this.cc(
+        'GetMergeOptions',
+        {
+          repositoryName,
+          destinationCommitSpecifier: destinationCommit,
+          sourceCommitSpecifier: sourceCommit,
+        },
+        (i) => this.client.send(new GetMergeOptionsCommand(i)),
+      );
+      strategies = (res.mergeOptions ?? []) as MergeOptionId[];
+    } catch (err) {
+      return {
+        state: 'has_conflicts',
+        mergeOptions: [],
+        reason: err instanceof Error ? err.message : String(err),
+      };
+    }
+
+    // Step 2: GetMergeOptions returning a strategy doesn't actually guarantee
+    // a clean merge — it just means CodeCommit can attempt that strategy. To
+    // match the console's "Resolve conflicts" indicator, we have to ask
+    // GetMergeConflicts (THREE_WAY_MERGE is the most permissive — if it can't
+    // merge cleanly, the other strategies won't either).
+    if (strategies.length === 0) {
+      return {
+        state: 'has_conflicts',
+        mergeOptions: [],
+        reason: 'No merge strategy is available for this PR.',
+      };
+    }
+    try {
+      const res = await this.cc(
+        'GetMergeConflicts',
+        {
+          repositoryName,
+          destinationCommitSpecifier: destinationCommit,
+          sourceCommitSpecifier: sourceCommit,
+          mergeOption: 'THREE_WAY_MERGE' as const,
+          conflictDetailLevel: 'FILE_LEVEL' as const,
+          maxConflictFiles: 50,
+        },
+        (i) => this.client.send(new GetMergeConflictsCommand(i)),
+      );
+      if (res.mergeable === true) {
+        return { state: 'mergeable', mergeOptions: strategies };
+      }
+      const conflictFiles = (res.conflictMetadataList ?? [])
+        .map((c) => c.filePath)
+        .filter((p): p is string => !!p);
+      return {
+        state: 'has_conflicts',
+        mergeOptions: strategies,
+        conflictCount: conflictFiles.length,
+        conflictFiles: conflictFiles.slice(0, 10),
+      };
+    } catch (err) {
+      return {
+        state: 'unknown',
+        mergeOptions: strategies,
+        reason: err instanceof Error ? err.message : String(err),
+      };
+    }
   }
 
   async updateApprovalState(

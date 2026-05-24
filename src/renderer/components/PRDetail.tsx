@@ -8,6 +8,7 @@ import type {
   PRDifferences,
   PullRequestApprovalView,
   PullRequestDetail,
+  PullRequestMergeability,
   PullRequestSummary,
   RelativeFileVersion,
   ReviewedFile,
@@ -15,6 +16,8 @@ import type {
 import { api, unwrap } from '../api';
 import { FileSidebar } from './FileSidebar';
 import { ContinuousDiff, type ContinuousDiffHandle } from './ContinuousDiff/ContinuousDiff';
+import { PRMetadata } from './PRMetadata';
+import { Markdown } from './Markdown';
 
 interface Props {
   repositoryName: string;
@@ -35,6 +38,9 @@ export function PRDetail({
   const [reviewed, setReviewed] = useState<ReviewedFile[]>([]);
   const [approval, setApproval] = useState<PullRequestApprovalView | null>(null);
   const [approvalBusy, setApprovalBusy] = useState(false);
+  const [mergeability, setMergeability] =
+    useState<PullRequestMergeability | null>(null);
+  const [metaOpen, setMetaOpen] = useState(true);
   const [postingThreadId, setPostingThreadId] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [showGeneral, setShowGeneral] = useState(false);
@@ -54,8 +60,11 @@ export function PRDetail({
       unwrap(api.drafts.list(pullRequest.id)),
       unwrap(api.reviewed.list(pullRequest.id)),
       unwrap(api.approval.get(repositoryName, pullRequest.id)).catch(() => null),
+      unwrap(api.mergeability.get(repositoryName, pullRequest.id)).catch(
+        () => null,
+      ),
     ])
-      .then(([d, diff, th, dr, rv, app]) => {
+      .then(([d, diff, th, dr, rv, app, merge]) => {
         if (cancelled) return;
         setDetail(d);
         setDifferences(diff);
@@ -63,6 +72,7 @@ export function PRDetail({
         setDrafts(dr);
         setReviewed(rv);
         setApproval(app);
+        setMergeability(merge);
       })
       .catch((err: Error) => !cancelled && setLoadError(err.message));
 
@@ -240,6 +250,8 @@ export function PRDetail({
           generalCount={generalComments.length}
           showGeneral={showGeneral}
           onToggleGeneral={() => setShowGeneral((v) => !v)}
+          metaOpen={metaOpen}
+          onToggleMeta={() => setMetaOpen((v) => !v)}
         />
         <div className="error">
           <div>Could not load PR data.</div>
@@ -263,6 +275,8 @@ export function PRDetail({
           generalCount={generalComments.length}
           showGeneral={showGeneral}
           onToggleGeneral={() => setShowGeneral((v) => !v)}
+          metaOpen={metaOpen}
+          onToggleMeta={() => setMetaOpen((v) => !v)}
         />
         <div className="loading">Loading PR…</div>
       </div>
@@ -282,7 +296,21 @@ export function PRDetail({
         generalCount={generalComments.length}
         showGeneral={showGeneral}
         onToggleGeneral={() => setShowGeneral((v) => !v)}
+        metaOpen={metaOpen}
+        onToggleMeta={() => setMetaOpen((v) => !v)}
       />
+      {metaOpen && (
+        <PRMetadata
+          detail={detail}
+          differences={differences}
+          mergeability={mergeability}
+          approvalCount={
+            approval?.states.filter((s) => s.approvalState === 'APPROVE').length ?? 0
+          }
+          fileCount={differences.files.length}
+          selfApproved={approval?.selfApproved ?? false}
+        />
+      )}
       <div className="pr-body">
         <FileSidebar
           files={differences.files}
@@ -339,7 +367,9 @@ export function PRDetail({
                       <span className="author">{shortArn(c.authorArn)}</span>
                       <span className="when">{fmt(c.createdAt)}</span>
                     </div>
-                    <div className="comment-body">{c.content}</div>
+                    <div className="comment-body">
+                      <Markdown source={c.content} />
+                    </div>
                   </div>
                 ))}
               </div>
@@ -362,6 +392,8 @@ function Toolbar({
   generalCount,
   showGeneral,
   onToggleGeneral,
+  metaOpen,
+  onToggleMeta,
 }: {
   pr: PullRequestSummary;
   detail: PullRequestDetail | null;
@@ -373,6 +405,8 @@ function Toolbar({
   generalCount: number;
   showGeneral: boolean;
   onToggleGeneral: () => void;
+  metaOpen: boolean;
+  onToggleMeta: () => void;
 }): JSX.Element {
   const approvedCount =
     approval?.states.filter((s) => s.approvalState === 'APPROVE').length ?? 0;
@@ -396,6 +430,9 @@ function Toolbar({
         </span>
       )}
       <span className="grow" />
+      <button onClick={onToggleMeta}>
+        {metaOpen ? 'Hide details' : 'Show details'}
+      </button>
       {generalCount > 0 && (
         <button onClick={onToggleGeneral}>
           {showGeneral ? 'Hide' : 'Show'} general ({generalCount})

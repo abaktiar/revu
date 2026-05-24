@@ -354,6 +354,141 @@ table.prs tbody tr:hover {
   border-color: var(--border);
 }
 
+/* ---- Markdown body --------------------------------------------------- */
+
+.md-body {
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Ubuntu, sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text);
+  word-wrap: break-word;
+}
+
+.md-body > *:first-child {
+  margin-top: 0;
+}
+
+.md-body > *:last-child {
+  margin-bottom: 0;
+}
+
+.md-body p {
+  margin: 0 0 8px;
+}
+
+.md-body h1,
+.md-body h2,
+.md-body h3,
+.md-body h4,
+.md-body h5,
+.md-body h6 {
+  margin: 16px 0 6px;
+  line-height: 1.25;
+  font-weight: 600;
+}
+
+.md-body h1 {
+  font-size: 18px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 4px;
+}
+
+.md-body h2 {
+  font-size: 16px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 4px;
+}
+
+.md-body h3 {
+  font-size: 14px;
+}
+
+.md-body ul,
+.md-body ol {
+  margin: 0 0 8px;
+  padding-left: 24px;
+}
+
+.md-body li + li {
+  margin-top: 2px;
+}
+
+.md-body li input[type='checkbox'] {
+  margin-right: 6px;
+}
+
+.md-body blockquote {
+  margin: 0 0 8px;
+  padding: 0 12px;
+  border-left: 3px solid var(--border);
+  color: var(--text-dim);
+}
+
+.md-body a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.md-body a:hover {
+  text-decoration: underline;
+}
+
+.md-body code {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 12px;
+}
+
+.md-body pre.md-codeblock {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin: 0 0 8px;
+  overflow-x: auto;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.md-body pre.md-codeblock code {
+  background: transparent;
+  border: none;
+  padding: 0;
+  font-size: 12px;
+}
+
+.md-body table {
+  border-collapse: collapse;
+  margin: 0 0 8px;
+  font-size: 12px;
+}
+
+.md-body table th,
+.md-body table td {
+  border: 1px solid var(--border);
+  padding: 4px 8px;
+}
+
+.md-body table th {
+  background: var(--panel-2);
+  font-weight: 600;
+}
+
+.md-body hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 12px 0;
+}
+
+.md-body img {
+  max-width: 100%;
+  height: auto;
+}
+
 .empty,
 .error,
 .loading {
@@ -629,6 +764,103 @@ kbd {
   background: var(--bg);
 }
 
+/* ---- PR metadata panel ---------------------------------------------- */
+
+.pr-meta {
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  padding: 10px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pr-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+
+.pr-meta-label {
+  color: var(--text-dim);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  min-width: 80px;
+}
+
+.branch {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 11px;
+  color: var(--text);
+}
+
+.branch.source {
+  border-color: rgba(91, 141, 239, 0.4);
+  color: var(--accent);
+}
+
+.branch.dest {
+  border-color: rgba(74, 222, 128, 0.4);
+  color: var(--ok);
+}
+
+.branch-arrow {
+  color: var(--text-dim);
+}
+
+.commit-pair {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+}
+
+.commit-pair code {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.who {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 11px;
+}
+
+.link {
+  background: none;
+  border: none;
+  color: var(--accent);
+  padding: 0;
+  cursor: pointer;
+  font-size: 12px;
+  text-decoration: underline;
+}
+
+.pr-description {
+  flex-basis: 100%;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin: 6px 0 0;
+  max-height: 360px;
+  overflow: auto;
+}
+
 .file-section {
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -718,6 +950,15 @@ kbd {
   white-space: pre;
   overflow-x: auto;
   color: var(--text);
+}
+
+/* hljs adds its own background + padding; we want the diff row colours to
+ * show through and our own padding/layout. Token colours from the theme stay. */
+.dcontent.hljs,
+.hljs {
+  background: transparent !important;
+  padding: 0 !important;
+  display: inline !important;
 }
 
 .drow-add > .dcontent,
@@ -961,8 +1202,13 @@ kbd {
 }
 
 .comment-body {
-  white-space: pre-wrap;
   word-wrap: break-word;
+}
+
+/* Markdown inside a comment shouldn't carry the outer .comment-body
+ * pre-wrap rules; the Markdown component already handles whitespace. */
+.comment-body .md-body p:only-child {
+  margin: 0;
 }
 
 .thread-actions {

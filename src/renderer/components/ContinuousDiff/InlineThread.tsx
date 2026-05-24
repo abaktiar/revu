@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { CommentNode, CommentThread } from '@shared/types';
+import { Markdown } from '../Markdown';
 
 interface Props {
   thread: CommentThread;
@@ -96,7 +97,7 @@ function CommentLine({ c }: { c: CommentNode }): JSX.Element {
         <span className="when">{fmt(c.createdAt)}</span>
       </div>
       <div className="comment-body">
-        {c.deleted ? <i>(deleted)</i> : c.content}
+        {c.deleted ? <i>(deleted)</i> : <Markdown source={c.content} />}
       </div>
     </div>
   );

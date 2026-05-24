@@ -55,3 +55,8 @@ Never hardcode or commit credentials.
 - Build in milestones (M1–M4 in BUILD_PROMPT.md). Implement one at a time and stop for verification.
 - State assumptions explicitly instead of guessing silently.
 - Keep module boundaries clean so the provider swap stays contained.
+
+## Git commits
+- **Never** add a `Co-Authored-By: Claude …` trailer (or any Claude/Anthropic
+  attribution) to commit messages on this project. Author commits as if written
+  solely by the user.

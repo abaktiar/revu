@@ -13,6 +13,7 @@ import type {
   PRDifferences,
   PullRequestApprovalView,
   PullRequestDetail,
+  PullRequestMergeability,
   PullRequestSummary,
   RepositorySummary,
 } from '@shared/types';
@@ -76,6 +77,13 @@ export interface ReviewProvider {
     pullRequestId: string,
     action: ApprovalAction,
   ): Promise<PullRequestApprovalView>;
+
+  // Mergeability — which merge strategies (if any) are valid for the current
+  // source/destination, or "already merged" / "has conflicts" with a reason.
+  getMergeability(
+    repositoryName: string,
+    pullRequestId: string,
+  ): Promise<PullRequestMergeability>;
 }
 
 export interface StaticCredentials {
