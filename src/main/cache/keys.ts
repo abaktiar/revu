@@ -12,6 +12,7 @@ export const NS = {
   fileDiff: 'fileDiff',
   differences: 'differences',
   approval: 'approval',
+  prCommits: 'prCommits',
 
   // Mutable — TTL-based, invalidated on related writes.
   prDetail: 'prDetail',
@@ -40,6 +41,7 @@ export const LIMITS = {
   mergeability: 200,
   prList: 50,
   repos: 10,
+  prCommits: 200,
 } as const;
 
 export function fileDiffKey(
@@ -79,4 +81,12 @@ export function mergeabilityKey(
 
 export function prListKey(repo: string, status: string | undefined): string {
   return `${repo}|${status ?? 'ALL'}`;
+}
+
+export function prCommitsKey(
+  repo: string,
+  beforeCommitId: string,
+  afterCommitId: string,
+): string {
+  return `${repo}|${beforeCommitId}|${afterCommitId}`;
 }

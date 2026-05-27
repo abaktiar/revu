@@ -249,6 +249,23 @@ export interface ExpandLinesResponse {
   toLine: number;
 }
 
+// ---- Commit types -------------------------------------------------------
+
+// One commit on the PR's source branch, walked back from the source tip to
+// (but not including) the merge base. Provider-agnostic — the renderer never
+// sees CodeCommit-specific shapes.
+export interface PullRequestCommit {
+  id: string; // full SHA
+  parents: string[];
+  message: string; // full commit message (may be multi-line)
+  authorName?: string;
+  authorEmail?: string;
+  authorDate?: string; // ISO
+  committerName?: string;
+  committerEmail?: string;
+  committerDate?: string; // ISO
+}
+
 // ---- Comment types ------------------------------------------------------
 
 export type RelativeFileVersion = 'BEFORE' | 'AFTER';

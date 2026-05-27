@@ -177,7 +177,7 @@ function HunkViewImpl({
               line={line}
               highlightedHtml={highlighted[i] ?? ''}
               onAdd={
-                lineForClick
+                !ctx.readOnly && lineForClick
                   ? () =>
                       onOpenComposer({
                         filePath,
@@ -187,35 +187,39 @@ function HunkViewImpl({
                   : undefined
               }
             />
-            {beforeThreads.map((t) => (
-              <ThreadRow
-                key={`bt-${t.threadId}`}
-                thread={t}
-                ctx={ctx}
-                callbacks={callbacks}
-              />
-            ))}
-            {afterThreads.map((t) => (
-              <ThreadRow
-                key={`at-${t.threadId}`}
-                thread={t}
-                ctx={ctx}
-                callbacks={callbacks}
-              />
-            ))}
-            {composerOpenHere && lineForClick !== undefined && (
-              <ComposerRow
-                location={{
-                  filePath,
-                  line: lineForClick,
-                  side: sideForClick,
-                }}
-                drafts={drafts}
-                ctx={ctx}
-                callbacks={callbacks}
-                onClose={onCloseComposer}
-              />
-            )}
+            {!ctx.readOnly &&
+              beforeThreads.map((t) => (
+                <ThreadRow
+                  key={`bt-${t.threadId}`}
+                  thread={t}
+                  ctx={ctx}
+                  callbacks={callbacks}
+                />
+              ))}
+            {!ctx.readOnly &&
+              afterThreads.map((t) => (
+                <ThreadRow
+                  key={`at-${t.threadId}`}
+                  thread={t}
+                  ctx={ctx}
+                  callbacks={callbacks}
+                />
+              ))}
+            {!ctx.readOnly &&
+              composerOpenHere &&
+              lineForClick !== undefined && (
+                <ComposerRow
+                  location={{
+                    filePath,
+                    line: lineForClick,
+                    side: sideForClick,
+                  }}
+                  drafts={drafts}
+                  ctx={ctx}
+                  callbacks={callbacks}
+                  onClose={onCloseComposer}
+                />
+              )}
           </Fragment>
         );
       })}

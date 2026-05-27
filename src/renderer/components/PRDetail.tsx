@@ -8,6 +8,7 @@ import type {
   PostCommentInput,
   PRDifferences,
   PullRequestApprovalView,
+  PullRequestCommit,
   PullRequestDetail,
   PullRequestMergeability,
   PullRequestSummary,
@@ -27,6 +28,14 @@ import type {
 import { PRMetadata } from './PRMetadata';
 import { Markdown } from './Markdown';
 import { ErrorBanner } from './ErrorBanner';
+import type { SidebarTab } from './FileSidebar';
+
+// Stable empty refs used when switching to commit view so memoized children
+// don't see fresh `[]` / `new Set()` references on every render.
+const EMPTY_THREADS: CommentThread[] = [];
+const EMPTY_DRAFTS: CommentDraft[] = [];
+const EMPTY_PATHS: Set<string> = new Set();
+const EMPTY_COUNTS: Record<string, number> = {};
 
 interface Props {
   repositoryName: string;
@@ -49,6 +58,7 @@ export function PRDetail({
   const [approvalBusy, setApprovalBusy] = useState(false);
   const [mergeability, setMergeability] =
     useState<PullRequestMergeability | null>(null);
+  const [commits, setCommits] = useState<PullRequestCommit[]>([]);
   const [metaOpen, setMetaOpen] = useState(true);
   const [webUrl, setWebUrl] = useState<string | undefined>(undefined);
   const [postingThreadId, setPostingThreadId] = useState<string | null>(null);
@@ -56,6 +66,18 @@ export function PRDetail({
   const [showGeneral, setShowGeneral] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshToken, setRefreshToken] = useState(0);
+  // ---- View mode -----------------------------------------------------
+  // Default view is the PR's full diff. Selecting a commit in the sidebar
+  // switches to viewing that single commit's diff (parent → commit). The
+  // selected commit is the one currently being viewed; commitDiff is the
+  // PRDifferences-shaped payload for the per-commit diff and is loaded
+  // lazily on selection (cached forever, keyed by commit pair).
+  const [selectedCommit, setSelectedCommit] =
+    useState<PullRequestCommit | null>(null);
+  const [commitDiff, setCommitDiff] = useState<PRDifferences | null>(null);
+  const [commitDiffLoading, setCommitDiffLoading] = useState(false);
+  const [commitDiffError, setCommitDiffError] = useState<unknown>(null);
+  const [sidebarTab, setSidebarTab] = useState<SidebarTab>('files');
   const diffRef = useRef<ContinuousDiffHandle | null>(null);
 
   // ---- Load PR data ---------------------------------------------------
@@ -83,8 +105,13 @@ export function PRDetail({
       unwrap(api.mergeability.get(repositoryName, pullRequest.id, opts)).catch(
         () => null,
       ),
+      // Commit list is informational — never block the diff view if the
+      // walk fails (e.g. permission denied on BatchGetCommits).
+      unwrap(api.prs.commits(repositoryName, pullRequest.id, opts)).catch(
+        () => [] as PullRequestCommit[],
+      ),
     ])
-      .then(([d, diff, th, dr, rv, app, merge]) => {
+      .then(([d, diff, th, dr, rv, app, merge, cmts]) => {
         if (cancelled) return;
         setDetail(d);
         setDifferences(diff);
@@ -93,6 +120,7 @@ export function PRDetail({
         setReviewed(rv);
         setApproval(app);
         setMergeability(merge);
+        setCommits(cmts);
         setRefreshing(false);
       })
       .catch((err: unknown) => {
@@ -122,6 +150,67 @@ export function PRDetail({
       cancelled = true;
     };
   }, [repositoryName, pullRequest.id]);
+
+  // Load the per-commit diff (parent → commit) when the user selects a commit
+  // in the sidebar. Cleared whenever selectedCommit returns to null. The
+  // active file is reset so the sidebar's previously-active file doesn't try
+  // to map onto the new (possibly disjoint) file list.
+  useEffect(() => {
+    if (!selectedCommit) {
+      setCommitDiff(null);
+      setCommitDiffError(null);
+      return;
+    }
+    // Walk to the first parent. For a root commit on the PR branch (no
+    // parent), fall back to the PR's merge base — the closest "before" we have.
+    const parent =
+      selectedCommit.parents[0] ?? differences?.beforeCommitId ?? null;
+    if (!parent) {
+      setCommitDiffError(
+        new Error(
+          'This commit has no parent and the PR has no merge base to fall back to.',
+        ),
+      );
+      return;
+    }
+    let cancelled = false;
+    setCommitDiffLoading(true);
+    setCommitDiffError(null);
+    setActiveFile(null);
+    unwrap(
+      api.prs.commitDifferences(repositoryName, parent, selectedCommit.id),
+    )
+      .then((d) => {
+        if (cancelled) return;
+        setCommitDiff(d);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setCommitDiffError(err);
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setCommitDiffLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedCommit, repositoryName, differences?.beforeCommitId]);
+
+  // Esc returns to the full PR diff when viewing a commit. Bound here (not in
+  // a child) so it also fires when focus is in the sidebar or banner.
+  useEffect(() => {
+    if (!selectedCommit) return;
+    function onKey(e: KeyboardEvent): void {
+      if (e.key !== 'Escape') return;
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      e.preventDefault();
+      setSelectedCommit(null);
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [selectedCommit]);
 
   // Hard refresh: drop every cached entry tied to this PR (and the in-memory
   // blob cache, since file diffs are keyed by blob IDs and we want truly
@@ -304,6 +393,16 @@ export function PRDetail({
     [toggleReviewed],
   );
 
+  // ---- View-mode derivation ------------------------------------------
+  // viewMode flips to 'commit' when the user picks a commit in the sidebar.
+  // The diff area, file list, threads, and reviewed-state all swap based on
+  // mode. Commit view is read-only: comments are anchored to the PR's commit
+  // pair, so posting from the per-commit diff would land on the wrong
+  // beforeCommitId / afterCommitId.
+  const viewMode: 'pr' | 'commit' = selectedCommit ? 'commit' : 'pr';
+  const currentDiff =
+    viewMode === 'commit' ? commitDiff : differences;
+
   // ---- Stable props for ContinuousDiff -------------------------------
   // These objects used to be built inline in the JSX, so every PRDetail render
   // (including every scroll-driven setActiveFile) produced new `ctx` /
@@ -311,21 +410,23 @@ export function PRDetail({
   // matters — recomputing these only when their inputs actually change is what
   // lets the file sections skip re-rendering during scroll.
   const ctx: DiffContext | null = useMemo(() => {
-    if (!differences) return null;
+    if (!currentDiff) return null;
     return {
       pullRequestId: pullRequest.id,
       repositoryName,
-      beforeCommitId: differences.beforeCommitId,
-      afterCommitId: differences.afterCommitId,
+      beforeCommitId: currentDiff.beforeCommitId,
+      afterCommitId: currentDiff.afterCommitId,
       postingThreadId,
       selfArn: approval?.selfArn,
+      readOnly: viewMode === 'commit',
     };
   }, [
-    differences,
+    currentDiff,
     pullRequest.id,
     repositoryName,
     postingThreadId,
     approval?.selfArn,
+    viewMode,
   ]);
 
   const callbacks: DiffCallbacks = useMemo(
@@ -357,6 +458,21 @@ export function PRDetail({
       behavior: reduced ? 'auto' : 'smooth',
       block: 'start',
     });
+  }, []);
+
+  const onSidebarSelectCommit = useCallback(
+    (commit: PullRequestCommit): void => {
+      setSelectedCommit(commit);
+    },
+    [],
+  );
+
+  const onChangeSidebarTab = useCallback((next: SidebarTab): void => {
+    setSidebarTab(next);
+  }, []);
+
+  const onBackToPrDiff = useCallback((): void => {
+    setSelectedCommit(null);
   }, []);
 
   const applyApproval = useCallback(
@@ -456,23 +572,49 @@ export function PRDetail({
       )}
       <div className="pr-body">
         <FileSidebar
-          files={differences.files}
+          tab={sidebarTab}
+          onChangeTab={onChangeSidebarTab}
+          files={currentDiff?.files ?? differences.files}
           selectedPath={activeFile ?? undefined}
-          commentCounts={commentCounts}
-          reviewedPaths={reviewedPaths}
+          commentCounts={viewMode === 'pr' ? commentCounts : EMPTY_COUNTS}
+          reviewedPaths={viewMode === 'pr' ? reviewedPaths : EMPTY_PATHS}
           onSelect={onSidebarSelect}
           onToggleReviewed={toggleReviewedSync}
+          filesReadOnly={viewMode === 'commit'}
+          commits={commits}
+          selectedCommitId={selectedCommit?.id}
+          onSelectCommit={onSidebarSelectCommit}
         />
         <div className="diff-area">
-          {differences.files.length === 0 || !ctx ? (
+          {viewMode === 'commit' && selectedCommit && (
+            <CommitBanner
+              commit={selectedCommit}
+              onBack={onBackToPrDiff}
+              loading={commitDiffLoading}
+            />
+          )}
+          {viewMode === 'commit' && commitDiffError ? (
+            <ErrorBanner
+              title="Could not load this commit's diff."
+              error={commitDiffError}
+              onRetry={() => {
+                setCommitDiffError(null);
+                setSelectedCommit((c) => (c ? { ...c } : c));
+              }}
+              retryLabel="Retry"
+              retrying={commitDiffLoading}
+            />
+          ) : viewMode === 'commit' && !commitDiff ? (
+            <div className="loading">Loading commit diff…</div>
+          ) : !currentDiff || currentDiff.files.length === 0 || !ctx ? (
             <div className="empty">No files changed.</div>
           ) : (
             <ContinuousDiff
               ref={diffRef}
-              files={differences.files}
-              threads={threads}
-              drafts={drafts}
-              reviewedPaths={reviewedPaths}
+              files={currentDiff.files}
+              threads={viewMode === 'pr' ? threads : EMPTY_THREADS}
+              drafts={viewMode === 'pr' ? drafts : EMPTY_DRAFTS}
+              reviewedPaths={viewMode === 'pr' ? reviewedPaths : EMPTY_PATHS}
               ctx={ctx}
               callbacks={callbacks}
               onActiveFileChange={onActiveFileChange}
@@ -676,6 +818,73 @@ function shortArn(arn: string | undefined): string {
   if (!arn) return 'unknown';
   const i = arn.lastIndexOf('/');
   return i >= 0 ? arn.slice(i + 1) : arn;
+}
+
+// Sticky banner above the diff area while viewing a single commit. Carries
+// the SHA, subject, author/time, and the Back-to-PR action. Esc also returns
+// to the PR diff (bound at the PRDetail level).
+function CommitBanner({
+  commit,
+  onBack,
+  loading,
+}: {
+  commit: PullRequestCommit;
+  onBack: () => void;
+  loading: boolean;
+}): JSX.Element {
+  const subject = (() => {
+    const i = commit.message.indexOf('\n');
+    return (i >= 0 ? commit.message.slice(0, i) : commit.message).trim();
+  })();
+  const who = commit.authorName ?? commit.committerName;
+  const when = commit.committerDate ?? commit.authorDate;
+  return (
+    <div className="commit-banner" role="status">
+      <button
+        type="button"
+        className="commit-banner-back"
+        onClick={onBack}
+        title="Return to the full PR diff (Esc)"
+      >
+        ← Back to PR diff
+      </button>
+      <code className="commit-banner-sha" title={commit.id}>
+        {commit.id.slice(0, 7)}
+      </code>
+      <span className="commit-banner-subject">
+        {subject || '(empty message)'}
+      </span>
+      <span className="grow" />
+      {who && <span className="hint">{who}</span>}
+      {when && (
+        <>
+          <span className="hint">·</span>
+          <span className="hint" title={when}>
+            {fmtRelTime(when)}
+          </span>
+        </>
+      )}
+      {loading && <span className="hint">· loading…</span>}
+    </div>
+  );
+}
+
+function fmtRelTime(iso: string): string {
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return '';
+  const diff = Date.now() - t;
+  const abs = Math.abs(diff);
+  const minute = 60_000;
+  const hour = 60 * minute;
+  const day = 24 * hour;
+  const week = 7 * day;
+  const month = 30 * day;
+  if (abs < minute) return diff >= 0 ? 'just now' : 'soon';
+  if (abs < hour) return `${Math.round(abs / minute)}m ago`;
+  if (abs < day) return `${Math.round(abs / hour)}h ago`;
+  if (abs < week) return `${Math.round(abs / day)}d ago`;
+  if (abs < month) return `${Math.round(abs / week)}w ago`;
+  return new Date(t).toLocaleDateString();
 }
 
 function fmt(iso: string | undefined): string {

@@ -39,6 +39,12 @@ export interface DiffContext {
   // ARN of the currently authenticated user, when known. Used to decide
   // whether to render the "Delete" affordance on each posted comment.
   selfArn?: string;
+  // True when this view is not commentable — typically the per-commit diff
+  // shown when the user selects a commit from the sidebar. Comments are
+  // anchored to the PR's commit pair, so opening a composer here would post
+  // against the wrong commits. The diff still renders normally; we just hide
+  // the "+" hover button, threads, composer, and the reviewed checkbox.
+  readOnly?: boolean;
 }
 
 export interface FileSectionApi {

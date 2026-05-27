@@ -22,6 +22,7 @@ import type {
   ListErrorEvent,
   ListItemEvent,
   PullRequestApprovalView,
+  PullRequestCommit,
   PullRequestDetail,
   PullRequestMergeability,
   RelativeFileVersion,
@@ -44,6 +45,8 @@ const CH = {
   prsListError: 'prs:list-error',
   prsGet: 'prs:get',
   prsDifferences: 'prs:differences',
+  prsCommitDifferences: 'prs:commit-differences',
+  prsCommits: 'prs:commits',
   prsFilePair: 'prs:file-pair',
   prsFileDiff: 'prs:file-diff',
   prsExpandLines: 'prs:expand-lines',
@@ -151,6 +154,25 @@ const api = {
         CH.prsDifferences,
         repositoryName,
         pullRequestId,
+        opts,
+      ),
+    commits: (
+      repositoryName: string,
+      pullRequestId: string,
+      opts?: ReadOpts,
+    ): Promise<IpcResult<PullRequestCommit[]>> =>
+      ipcRenderer.invoke(CH.prsCommits, repositoryName, pullRequestId, opts),
+    commitDifferences: (
+      repositoryName: string,
+      beforeCommitId: string,
+      afterCommitId: string,
+      opts?: ReadOpts,
+    ): Promise<IpcResult<PRDifferences>> =>
+      ipcRenderer.invoke(
+        CH.prsCommitDifferences,
+        repositoryName,
+        beforeCommitId,
+        afterCommitId,
         opts,
       ),
     filePair: (

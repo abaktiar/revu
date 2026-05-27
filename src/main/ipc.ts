@@ -22,6 +22,7 @@ import type {
   ListErrorEvent,
   ListItemEvent,
   PullRequestApprovalView,
+  PullRequestCommit,
   PullRequestDetail,
   PullRequestMergeability,
   RelativeFileVersion,
@@ -58,6 +59,8 @@ export const IPC = {
   prsListError: 'prs:list-error',
   prsGet: 'prs:get',
   prsDifferences: 'prs:differences',
+  prsCommitDifferences: 'prs:commit-differences',
+  prsCommits: 'prs:commits',
   prsFilePair: 'prs:file-pair',
   prsFileDiff: 'prs:file-diff',
   prsExpandLines: 'prs:expand-lines',
@@ -329,6 +332,50 @@ export function registerIpc(): void {
         const p = await getProvider();
         return ok(
           await p.getDifferences(repositoryName, pullRequestId, opts),
+        );
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IPC.prsCommitDifferences,
+    async (
+      _e,
+      repositoryName: string,
+      beforeCommitId: string,
+      afterCommitId: string,
+      opts?: { forceFresh?: boolean },
+    ): Promise<IpcResult<PRDifferences>> => {
+      try {
+        const p = await getProvider();
+        return ok(
+          await p.getCommitDifferences(
+            repositoryName,
+            beforeCommitId,
+            afterCommitId,
+            opts,
+          ),
+        );
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IPC.prsCommits,
+    async (
+      _e,
+      repositoryName: string,
+      pullRequestId: string,
+      opts?: { forceFresh?: boolean },
+    ): Promise<IpcResult<PullRequestCommit[]>> => {
+      try {
+        const p = await getProvider();
+        return ok(
+          await p.listPullRequestCommits(repositoryName, pullRequestId, opts),
         );
       } catch (err) {
         return fail(err);

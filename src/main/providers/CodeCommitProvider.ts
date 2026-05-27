@@ -1,5 +1,7 @@
 import {
+  BatchGetCommitsCommand,
   CodeCommitClient,
+  type Commit as CCCommit,
   DeleteCommentContentCommand,
   DescribePullRequestEventsCommand,
   EvaluatePullRequestApprovalRulesCommand,
@@ -49,6 +51,7 @@ import type {
   PRDifferences,
   PRStatus,
   PullRequestApprovalView,
+  PullRequestCommit,
   PullRequestDetail,
   PullRequestMergeability,
   PullRequestSummary,
@@ -80,6 +83,7 @@ import {
   LIMITS,
   mergeabilityKey,
   NS,
+  prCommitsKey,
   prDetailKey,
   TTL,
 } from '../cache/keys';
@@ -95,6 +99,12 @@ const DETAIL_FETCH_CONCURRENCY = 3;
 // CodeCommit GetDifferences caps MaxResults at 400. Anything higher is rejected
 // with "A valid limit is between 1 and 400".
 const DIFF_PAGE_SIZE = 400;
+// BatchGetCommits accepts up to 100 commit IDs per call.
+const BATCH_COMMITS_PAGE_SIZE = 100;
+// Safety bound on the parent-walk. A PR with this many commits is already an
+// outlier; stopping here protects the UI from runaway histories (e.g. a PR
+// branched off the wrong base where the merge base sits very far back).
+const MAX_PR_COMMITS = 500;
 // SDK retry budget per request. The default (3) bails too quickly on large PR
 // lists where the bucket is already drained. 8 + adaptive backoff is roughly
 // the sweet spot — long enough to ride out a throttle storm, short enough that
@@ -425,12 +435,56 @@ export class CodeCommitProvider implements ReviewProvider {
       );
     }
 
-    // Cache lookup: keyed by the (before, after) commit pair. Commits are
-    // immutable in git, so this entry stays valid forever — no TTL.
+    return this.fetchDifferences(
+      repositoryName,
+      beforeCommit,
+      afterCommit,
+      pullRequestId,
+      opts,
+    );
+  }
+
+  async getCommitDifferences(
+    repositoryName: string,
+    beforeCommitId: string,
+    afterCommitId: string,
+    opts?: ReadOptions,
+  ): Promise<PRDifferences> {
+    const before = nonEmpty(beforeCommitId);
+    const after = nonEmpty(afterCommitId);
+    if (!before || !after) {
+      throw new Error(
+        `getCommitDifferences requires non-empty commit ids ` +
+          `(before=${j(beforeCommitId)} after=${j(afterCommitId)})`,
+      );
+    }
+    return this.fetchDifferences(repositoryName, before, after, '', opts);
+  }
+
+  // Internal: the actual GetDifferences pagination + cache logic shared by
+  // getDifferences (PR view) and getCommitDifferences (per-commit view). The
+  // cache key is the (repo, before, after) triple — commits are immutable, so
+  // the cached entry never expires. `pullRequestId` is stored on the result
+  // for the PR view; commit-view callers pass '' and the renderer ignores it.
+  private async fetchDifferences(
+    repositoryName: string,
+    beforeCommit: string,
+    afterCommit: string,
+    pullRequestId: string,
+    opts?: ReadOptions,
+  ): Promise<PRDifferences> {
     const dKey = differencesKey(repositoryName, beforeCommit, afterCommit);
     if (!opts?.forceFresh) {
       const cached = await getCached<PRDifferences>(NS.differences, dKey);
-      if (cached) return cached;
+      // Two callers share this cache entry. If a commit-view caller filled it
+      // first (pullRequestId === ''), a later PR-view caller still wants the
+      // correct pullRequestId on the returned object — overlay it without
+      // touching the cached entry.
+      if (cached) {
+        return pullRequestId && !cached.pullRequestId
+          ? { ...cached, pullRequestId }
+          : cached;
+      }
     }
 
     const diffs: Difference[] = [];
@@ -528,6 +582,111 @@ export class CodeCommitProvider implements ReviewProvider {
     const text = decodeUtf8(bytes);
     const lines = sliceLines(text, req.fromLine, req.toLine);
     return { lines, fromLine: req.fromLine, toLine: req.toLine };
+  }
+
+  // ---- Commits ----------------------------------------------------------
+
+  // CodeCommit has no "list commits in a PR" API, so we walk parent pointers
+  // starting from sourceCommit and stop when every frontier commit has been
+  // visited or is at/past the merge base. BatchGetCommits lets us pull up to
+  // 100 commits per call, so even a 200-commit PR is two round-trips.
+  //
+  // Topology notes:
+  //   - A PR branch with a merge from elsewhere has multi-parent commits; we
+  //     keep walking *all* parents so the listed history matches what AWS
+  //     would consider "introduced by this PR."
+  //   - Visited set is keyed by commit id, so the same commit reached via two
+  //     paths is fetched once.
+  //   - Walk stops at the merge base by adding it to `visited` up-front — its
+  //     ancestors are common to the destination and aren't PR commits.
+  async listPullRequestCommits(
+    repositoryName: string,
+    pullRequestId: string,
+    opts?: ReadOptions,
+  ): Promise<PullRequestCommit[]> {
+    const pr = await this.getPullRequest(repositoryName, pullRequestId, opts);
+    const target =
+      pr.targets.find(
+        (t) => t.repositoryName.toLowerCase() === repositoryName.toLowerCase(),
+      ) ?? pr.targets[0];
+    if (!target) {
+      throw new Error(`Pull request ${pullRequestId} has no targets.`);
+    }
+    const afterCommit = nonEmpty(target.sourceCommitId);
+    const beforeCommit =
+      nonEmpty(target.mergeBase) ?? nonEmpty(target.destinationCommitId);
+    if (!afterCommit || !beforeCommit) {
+      throw new Error(
+        `Pull request ${pullRequestId} is missing commit ids ` +
+          `(sourceCommitId=${j(target.sourceCommitId)}, ` +
+          `destinationCommitId=${j(target.destinationCommitId)}, ` +
+          `mergeBase=${j(target.mergeBase)}).`,
+      );
+    }
+
+    // Cache lookup: keyed by (before, after) commit pair. Both are immutable
+    // git ids, so the cached entry stays valid forever — no TTL.
+    const cKey = prCommitsKey(repositoryName, beforeCommit, afterCommit);
+    if (!opts?.forceFresh) {
+      const cached = await getCached<PullRequestCommit[]>(NS.prCommits, cKey);
+      if (cached) return cached;
+    }
+
+    // Already-merged PRs: sourceCommit will be reachable from destination, and
+    // the merge base equals sourceCommit. There's nothing to walk; return [].
+    if (afterCommit === beforeCommit) {
+      await putCached(NS.prCommits, cKey, [], LIMITS.prCommits);
+      return [];
+    }
+
+    const collected: PullRequestCommit[] = [];
+    const visited = new Set<string>([beforeCommit]);
+    let frontier: string[] = [afterCommit];
+
+    while (frontier.length > 0 && collected.length < MAX_PR_COMMITS) {
+      // De-dupe + apply MAX cap before issuing the batch call.
+      const batch: string[] = [];
+      for (const id of frontier) {
+        if (visited.has(id)) continue;
+        visited.add(id);
+        batch.push(id);
+        if (batch.length >= BATCH_COMMITS_PAGE_SIZE) break;
+        if (collected.length + batch.length >= MAX_PR_COMMITS) break;
+      }
+      // Carry over anything we didn't fit into this batch.
+      const remainder = frontier.slice(batch.length);
+      frontier = remainder;
+      if (batch.length === 0) continue;
+
+      const res = await this.cc(
+        'BatchGetCommits',
+        { repositoryName, commitIds: batch },
+        (i) => this.client.send(new BatchGetCommitsCommand(i)),
+      );
+      for (const c of res.commits ?? []) {
+        const mapped = mapCommit(c);
+        if (!mapped) continue;
+        collected.push(mapped);
+        // Queue parents we haven't already seen. The merge base is in
+        // `visited` so we naturally stop there.
+        for (const parent of mapped.parents) {
+          if (!visited.has(parent)) frontier.push(parent);
+        }
+      }
+    }
+
+    // Sort newest-first by committer date (fall back to author date, then id
+    // stability). The walk produces a topological order but not strictly
+    // chronological once multi-parent merges are involved.
+    collected.sort((a, b) => {
+      const at = commitSortKey(a);
+      const bt = commitSortKey(b);
+      if (bt !== at) return bt - at;
+      return a.id.localeCompare(b.id);
+    });
+
+    await putCached(NS.prCommits, cKey, collected, LIMITS.prCommits);
+    return collected;
   }
 
   // ---- Comments ---------------------------------------------------------
@@ -1587,6 +1746,45 @@ function sanitizeForLog<T>(input: T): T {
     }
   }
   return out as T;
+}
+
+function mapCommit(c: CCCommit): PullRequestCommit | null {
+  if (!c.commitId) return null;
+  return {
+    id: c.commitId,
+    parents: c.parents ?? [],
+    message: c.message ?? '',
+    authorName: c.author?.name,
+    authorEmail: c.author?.email,
+    authorDate: parseGitDate(c.author?.date),
+    committerName: c.committer?.name,
+    committerEmail: c.committer?.email,
+    committerDate: parseGitDate(c.committer?.date),
+  };
+}
+
+// CodeCommit returns git's raw "<unix-seconds> <±HHMM>" format for commit
+// dates (e.g. "1700000000 +0530"). Convert to ISO so the renderer's existing
+// relative-time helper handles them like every other timestamp. If the input
+// is already ISO-shaped or unparseable, leave it alone / drop it.
+function parseGitDate(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  const m = /^(\d+)\s*([+-]\d{2})(\d{2})?$/.exec(raw.trim());
+  if (m) {
+    const seconds = Number(m[1]);
+    if (Number.isFinite(seconds)) {
+      return new Date(seconds * 1000).toISOString();
+    }
+  }
+  const t = Date.parse(raw);
+  return Number.isNaN(t) ? undefined : new Date(t).toISOString();
+}
+
+function commitSortKey(c: PullRequestCommit): number {
+  const when = c.committerDate ?? c.authorDate;
+  if (!when) return 0;
+  const t = Date.parse(when);
+  return Number.isNaN(t) ? 0 : t;
 }
 
 function mapComment(c: CCComment): CommentNode {

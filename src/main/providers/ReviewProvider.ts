@@ -15,6 +15,7 @@ import type {
   PRDifferences,
   ListSessionResult,
   PullRequestApprovalView,
+  PullRequestCommit,
   PullRequestDetail,
   PullRequestMergeability,
   PullRequestSummary,
@@ -68,6 +69,17 @@ export interface ReviewProvider {
     pullRequestId: string,
     opts?: ReadOptions,
   ): Promise<PRDifferences>;
+  // Like getDifferences, but for an arbitrary commit pair (typically the
+  // commit's first parent → the commit itself). Used by the per-commit view in
+  // the file sidebar. Returned shape mirrors PRDifferences so the renderer's
+  // diff pipeline accepts it without branching; pullRequestId is left empty
+  // since this view is not anchored to a PR.
+  getCommitDifferences(
+    repositoryName: string,
+    beforeCommitId: string,
+    afterCommitId: string,
+    opts?: ReadOptions,
+  ): Promise<PRDifferences>;
   getFilePair(
     repositoryName: string,
     beforeBlobId: string | undefined,
@@ -98,6 +110,16 @@ export interface ReviewProvider {
   // children remain so threads don't collapse. Provider implementations
   // should refuse to delete comments not authored by the current user.
   deleteComment(input: DeleteCommentInput): Promise<CommentNode>;
+
+  // Commits unique to the PR (everything reachable from the source tip but
+  // not from the merge base / destination). Returned newest-first. The
+  // provider is responsible for bounding the walk so a runaway history doesn't
+  // hang the UI.
+  listPullRequestCommits(
+    repositoryName: string,
+    pullRequestId: string,
+    opts?: ReadOptions,
+  ): Promise<PullRequestCommit[]>;
 
   // Approval
   getApprovalView(

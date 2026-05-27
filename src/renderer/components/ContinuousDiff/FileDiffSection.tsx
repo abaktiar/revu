@@ -273,19 +273,23 @@ function FileDiffSectionImpl({
           </span>
         )}
         <span className="grow" />
-        {threads.length > 0 && (
+        {!ctx.readOnly && threads.length > 0 && (
           <span className="hint">
             {threads.length} thread{threads.length === 1 ? '' : 's'}
           </span>
         )}
-        <label className="reviewed-toggle inline">
-          <input
-            type="checkbox"
-            checked={reviewed}
-            onChange={(e) => callbacks.onToggleReviewed(entry, e.target.checked)}
-          />
-          Reviewed
-        </label>
+        {!ctx.readOnly && (
+          <label className="reviewed-toggle inline">
+            <input
+              type="checkbox"
+              checked={reviewed}
+              onChange={(e) =>
+                callbacks.onToggleReviewed(entry, e.target.checked)
+              }
+            />
+            Reviewed
+          </label>
+        )}
       </header>
       {!collapsed && (
         <div className="file-section-body">
