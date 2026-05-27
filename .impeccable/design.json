@@ -1,0 +1,416 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-05-27T00:00:00Z",
+  "title": "Design System: revu",
+  "extensions": {
+    "colorMeta": {
+      "accent": {
+        "role": "primary",
+        "displayName": "Hairline Blue",
+        "canonical": "oklch(64% 0.15 254)",
+        "tonalRamp": [
+          "oklch(20% 0.06 254)",
+          "oklch(30% 0.08 254)",
+          "oklch(40% 0.10 254)",
+          "oklch(50% 0.13 254)",
+          "oklch(64% 0.15 254)",
+          "oklch(74% 0.13 254)",
+          "oklch(84% 0.09 254)",
+          "oklch(94% 0.04 254)"
+        ]
+      },
+      "accent-fade": {
+        "role": "primary",
+        "displayName": "Hairline Blue Fade",
+        "canonical": "oklch(30% 0.06 254)",
+        "tonalRamp": [
+          "oklch(15% 0.03 254)",
+          "oklch(22% 0.05 254)",
+          "oklch(30% 0.06 254)",
+          "oklch(40% 0.07 254)",
+          "oklch(52% 0.08 254)",
+          "oklch(65% 0.07 254)",
+          "oklch(78% 0.05 254)",
+          "oklch(92% 0.03 254)"
+        ]
+      },
+      "bg": {
+        "role": "neutral",
+        "displayName": "Cool Slate 900",
+        "canonical": "oklch(15% 0.010 254)",
+        "tonalRamp": [
+          "oklch(15% 0.010 254)",
+          "oklch(20% 0.013 254)",
+          "oklch(23% 0.018 254)",
+          "oklch(28% 0.022 254)",
+          "oklch(40% 0.020 254)",
+          "oklch(62% 0.025 254)",
+          "oklch(80% 0.018 254)",
+          "oklch(92% 0.008 254)"
+        ]
+      },
+      "panel": {
+        "role": "neutral",
+        "displayName": "Cool Slate 800",
+        "canonical": "oklch(20% 0.013 254)",
+        "tonalRamp": [
+          "oklch(15% 0.010 254)",
+          "oklch(20% 0.013 254)",
+          "oklch(23% 0.018 254)",
+          "oklch(28% 0.022 254)",
+          "oklch(40% 0.020 254)",
+          "oklch(62% 0.025 254)",
+          "oklch(80% 0.018 254)",
+          "oklch(92% 0.008 254)"
+        ]
+      },
+      "panel-2": {
+        "role": "neutral",
+        "displayName": "Cool Slate 700",
+        "canonical": "oklch(23% 0.018 254)",
+        "tonalRamp": [
+          "oklch(15% 0.010 254)",
+          "oklch(20% 0.013 254)",
+          "oklch(23% 0.018 254)",
+          "oklch(28% 0.022 254)",
+          "oklch(40% 0.020 254)",
+          "oklch(62% 0.025 254)",
+          "oklch(80% 0.018 254)",
+          "oklch(92% 0.008 254)"
+        ]
+      },
+      "border": {
+        "role": "neutral",
+        "displayName": "Cool Slate 600 (Hairline)",
+        "canonical": "oklch(28% 0.022 254)",
+        "tonalRamp": [
+          "oklch(15% 0.010 254)",
+          "oklch(20% 0.013 254)",
+          "oklch(23% 0.018 254)",
+          "oklch(28% 0.022 254)",
+          "oklch(40% 0.020 254)",
+          "oklch(62% 0.025 254)",
+          "oklch(80% 0.018 254)",
+          "oklch(92% 0.008 254)"
+        ]
+      },
+      "control": {
+        "role": "neutral",
+        "displayName": "Control Slate",
+        "canonical": "oklch(26% 0.022 254)",
+        "tonalRamp": [
+          "oklch(18% 0.018 254)",
+          "oklch(22% 0.020 254)",
+          "oklch(26% 0.022 254)",
+          "oklch(32% 0.025 254)",
+          "oklch(42% 0.024 254)",
+          "oklch(58% 0.022 254)",
+          "oklch(76% 0.016 254)",
+          "oklch(92% 0.008 254)"
+        ]
+      },
+      "text": {
+        "role": "neutral",
+        "displayName": "Text Primary",
+        "canonical": "oklch(92% 0.008 254)",
+        "tonalRamp": [
+          "oklch(15% 0.010 254)",
+          "oklch(28% 0.018 254)",
+          "oklch(42% 0.020 254)",
+          "oklch(55% 0.022 254)",
+          "oklch(68% 0.018 254)",
+          "oklch(80% 0.012 254)",
+          "oklch(92% 0.008 254)",
+          "oklch(98% 0.004 254)"
+        ]
+      },
+      "text-dim": {
+        "role": "neutral",
+        "displayName": "Text Dim",
+        "canonical": "oklch(62% 0.025 254)",
+        "tonalRamp": [
+          "oklch(18% 0.010 254)",
+          "oklch(28% 0.018 254)",
+          "oklch(40% 0.022 254)",
+          "oklch(50% 0.024 254)",
+          "oklch(62% 0.025 254)",
+          "oklch(75% 0.022 254)",
+          "oklch(86% 0.014 254)",
+          "oklch(95% 0.006 254)"
+        ]
+      },
+      "primary-text": {
+        "role": "neutral",
+        "displayName": "Primary Text (on accent)",
+        "canonical": "oklch(97% 0.012 254)",
+        "tonalRamp": [
+          "oklch(20% 0.012 254)",
+          "oklch(35% 0.018 254)",
+          "oklch(48% 0.022 254)",
+          "oklch(60% 0.024 254)",
+          "oklch(72% 0.022 254)",
+          "oklch(84% 0.018 254)",
+          "oklch(92% 0.014 254)",
+          "oklch(97% 0.012 254)"
+        ]
+      },
+      "ok": {
+        "role": "tertiary",
+        "displayName": "Ok Green",
+        "canonical": "oklch(80% 0.18 145)",
+        "tonalRamp": [
+          "oklch(22% 0.06 145)",
+          "oklch(34% 0.10 145)",
+          "oklch(46% 0.14 145)",
+          "oklch(58% 0.17 145)",
+          "oklch(70% 0.19 145)",
+          "oklch(80% 0.18 145)",
+          "oklch(88% 0.12 145)",
+          "oklch(95% 0.05 145)"
+        ]
+      },
+      "warn": {
+        "role": "tertiary",
+        "displayName": "Warn Amber",
+        "canonical": "oklch(83% 0.18 90)",
+        "tonalRamp": [
+          "oklch(28% 0.06 90)",
+          "oklch(40% 0.10 90)",
+          "oklch(52% 0.14 90)",
+          "oklch(64% 0.17 90)",
+          "oklch(74% 0.19 90)",
+          "oklch(83% 0.18 90)",
+          "oklch(90% 0.12 90)",
+          "oklch(96% 0.05 90)"
+        ]
+      },
+      "bad": {
+        "role": "tertiary",
+        "displayName": "Bad Red",
+        "canonical": "oklch(70% 0.17 22)",
+        "tonalRamp": [
+          "oklch(22% 0.06 22)",
+          "oklch(34% 0.10 22)",
+          "oklch(46% 0.14 22)",
+          "oklch(58% 0.16 22)",
+          "oklch(70% 0.17 22)",
+          "oklch(80% 0.14 22)",
+          "oklch(88% 0.09 22)",
+          "oklch(95% 0.04 22)"
+        ]
+      },
+      "neutral": {
+        "role": "tertiary",
+        "displayName": "Neutral Slate (status)",
+        "canonical": "oklch(70% 0.025 254)",
+        "tonalRamp": [
+          "oklch(22% 0.012 254)",
+          "oklch(34% 0.016 254)",
+          "oklch(46% 0.020 254)",
+          "oklch(58% 0.022 254)",
+          "oklch(70% 0.025 254)",
+          "oklch(80% 0.020 254)",
+          "oklch(88% 0.014 254)",
+          "oklch(95% 0.006 254)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "Markdown h1 inside PR descriptions. The only large type in the app." },
+      "headline": { "displayName": "Headline", "purpose": "Markdown h2. Underlined with a 1px hairline border." },
+      "title": { "displayName": "Title", "purpose": "Markdown h3, comment authors, file paths in section headers." },
+      "body": { "displayName": "Body / UI", "purpose": "All UI text. The default. Buttons, inputs, badges, list items, comments." },
+      "label": { "displayName": "Label (uppercase metadata)", "purpose": "Section labels, table headers, settings groups. The strongest hierarchical signal — uppercase + 0.5px tracking + Text Dim." },
+      "code": { "displayName": "Code", "purpose": "Inline code, code blocks, branch pills, commit IDs." },
+      "diff-row": { "displayName": "Diff Row", "purpose": "Continuous-diff rows. Line-height is in pixels (18px), not unitless — virtualization depends on this constant." }
+    },
+    "shadows": [
+      {
+        "name": "button-bevel",
+        "value": "inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 1px 1px rgba(0, 0, 0, 0.14)",
+        "purpose": "Persistent stroke-and-bevel on every default button. Reads as material, not elevation."
+      },
+      {
+        "name": "button-bevel-mac",
+        "value": "inset 0 1px 0 rgba(255, 255, 255, 0.09), 0 1px 1px rgba(0, 0, 0, 0.2)",
+        "purpose": "macOS amplification of the default button bevel. Slightly brighter top highlight, slightly deeper bottom shadow to read against translucent surfaces."
+      },
+      {
+        "name": "button-pressed",
+        "value": "inset 0 1px 2px rgba(0, 0, 0, 0.22), 0 1px 0 rgba(255, 255, 255, 0.03)",
+        "purpose": "Replaces the bevel on :active. Inset deeper, highlight flips to bottom. Paired with translateY(1px)."
+      },
+      {
+        "name": "focus-ring",
+        "value": "0 0 0 3px rgba(91, 141, 239, 0.34)",
+        "purpose": "Keyboard focus on any control. The only color-based elevation in the system; treat as accessibility, not decoration."
+      },
+      {
+        "name": "mac-card-ambient",
+        "value": "0 10px 28px rgba(0, 0, 0, 0.16)",
+        "purpose": "Single ambient drop shadow under bordered cards (file-section, inline-composer, inline-thread, thread-flat, reply-box, composer). macOS only."
+      },
+      {
+        "name": "file-list-item-active-glow",
+        "value": "inset 0 0 0 1px rgba(91, 141, 239, 0.1)",
+        "purpose": "Faint inset Hairline Blue glow inside the active sidebar item. Reinforces the active state without thickening the border."
+      },
+      {
+        "name": "mac-vibrancy-blur",
+        "value": "backdrop-filter: blur(22px) saturate(1.35); -webkit-backdrop-filter: blur(22px) saturate(1.35)",
+        "purpose": "Sticky panel headers, table headers, settings/filters/meta strips. macOS only. Always paired with a prefers-reduced-transparency fallback."
+      },
+      {
+        "name": "mac-vibrancy-blur-topbar",
+        "value": "backdrop-filter: blur(28px) saturate(1.45); -webkit-backdrop-filter: blur(28px) saturate(1.45)",
+        "purpose": "Topbar and PR toolbar — slightly heavier blur to anchor the window-drag region. macOS only."
+      },
+      {
+        "name": "mac-vibrancy-blur-sidebar",
+        "value": "backdrop-filter: blur(34px) saturate(1.5); -webkit-backdrop-filter: blur(34px) saturate(1.5)",
+        "purpose": "File sidebar — the most translucent surface, reads as a layer floating over the desktop. macOS only."
+      }
+    ],
+    "motion": [
+      {
+        "name": "ease-standard",
+        "value": "ease",
+        "purpose": "Default for color, border, shadow transitions. The browser default keeps things quiet."
+      },
+      {
+        "name": "duration-color",
+        "value": "150ms",
+        "purpose": "Background, border, shadow transitions on interactive controls (buttons, inputs, segmented)."
+      },
+      {
+        "name": "duration-transform",
+        "value": "80ms",
+        "purpose": "Press feedback. Buttons translate 1px down on :active in 80ms — sharp, snappy, never bouncy."
+      },
+      {
+        "name": "duration-row-hover",
+        "value": "140ms",
+        "purpose": "Background fade on PR table rows on hover. Slightly slower than control feedback because the row is larger and the fade is subtler."
+      }
+    ],
+    "breakpoints": []
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The single accent-filled action. One per surface; further actions use the default button.",
+      "html": "<button class=\"ds-btn-primary\">Post comment</button>",
+      "css": ".ds-btn-primary { appearance: none; min-height: 28px; padding: 5px 11px; border-radius: 7px; border: 1px solid #5b8def; background: linear-gradient(rgba(255,255,255,0.16), rgba(255,255,255,0)), #5b8def; color: #f7faff; font: 400 13px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Ubuntu, sans-serif; cursor: pointer; box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), 0 1px 1px rgba(0,0,0,0.14); transition: background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease, transform 80ms ease; } .ds-btn-primary:hover { border-color: #7fa6ff; } .ds-btn-primary:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(91,141,239,0.34); } .ds-btn-primary:active { transform: translateY(1px); box-shadow: inset 0 1px 2px rgba(0,0,0,0.22), 0 1px 0 rgba(255,255,255,0.03); }"
+    },
+    {
+      "name": "Default Button",
+      "kind": "button",
+      "refersTo": "button-default",
+      "description": "Every non-primary action. Stroke-and-bevel surface that reads as material.",
+      "html": "<button class=\"ds-btn-default\">Cancel</button>",
+      "css": ".ds-btn-default { appearance: none; min-height: 28px; padding: 5px 11px; border-radius: 7px; border: 1px solid #262d3c; background: linear-gradient(rgba(255,255,255,0.035), rgba(255,255,255,0)), #212837; color: #e6e9ef; font: 400 13px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Ubuntu, sans-serif; cursor: pointer; box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), 0 1px 1px rgba(0,0,0,0.14); transition: background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease, transform 80ms ease; } .ds-btn-default:hover { border-color: #5b8def; background: linear-gradient(rgba(255,255,255,0.045), rgba(255,255,255,0.005)), #273044; } .ds-btn-default:focus-visible { outline: none; border-color: #5b8def; box-shadow: 0 0 0 3px rgba(91,141,239,0.34); } .ds-btn-default:active { background: #1a2030; transform: translateY(1px); box-shadow: inset 0 1px 2px rgba(0,0,0,0.22), 0 1px 0 rgba(255,255,255,0.03); }"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Text input / select / textarea. Focus shifts the border to Hairline Blue without a ring (the border is the signal).",
+      "html": "<input class=\"ds-input\" type=\"text\" placeholder=\"Search files…\" />",
+      "css": ".ds-input { background: rgba(28,34,48,0.95); border: 1px solid #262d3c; border-radius: 7px; padding: 6px 10px; min-height: 28px; color: #e6e9ef; font: 400 13px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Ubuntu, sans-serif; outline: none; transition: border-color 150ms ease; } .ds-input::placeholder { color: #8a93a6; } .ds-input:focus { border-color: #5b8def; } .ds-input:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(91,141,239,0.34); border-color: #5b8def; }"
+    },
+    {
+      "name": "Segmented Control",
+      "kind": "nav",
+      "refersTo": "segmented-button",
+      "description": "Inline filter / view-mode picker. Active option uses the accent-fade tint.",
+      "html": "<div class=\"ds-seg\"><button class=\"ds-seg-btn ds-seg-btn-active\">Open</button><button class=\"ds-seg-btn\">Merged</button><button class=\"ds-seg-btn\">Closed</button></div>",
+      "css": ".ds-seg { display: inline-flex; border: 1px solid #262d3c; border-radius: 6px; overflow: hidden; background: #1c2230; } .ds-seg-btn { background: transparent; border: none; padding: 6px 14px; color: #8a93a6; cursor: pointer; font: 400 13px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Ubuntu, sans-serif; transition: background-color 150ms ease, color 150ms ease; } .ds-seg-btn + .ds-seg-btn { border-left: 1px solid #262d3c; } .ds-seg-btn:hover { color: #e6e9ef; } .ds-seg-btn-active { background: #2a3a5e; color: #e6e9ef; }"
+    },
+    {
+      "name": "Status Badge (Open)",
+      "kind": "chip",
+      "refersTo": "badge-open",
+      "description": "PR status pill. Same recipe for every variant: 12% tint background, 100% colored text, 40% colored border.",
+      "html": "<span class=\"ds-badge-open\">OPEN</span>",
+      "css": ".ds-badge-open { display: inline-block; padding: 2px 8px; border-radius: 999px; font: 600 11px/1.2 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Ubuntu, sans-serif; letter-spacing: 0.5px; background: rgba(74,222,128,0.12); color: #4ade80; border: 1px solid rgba(74,222,128,0.4); }"
+    },
+    {
+      "name": "Change Type Chip (Added)",
+      "kind": "chip",
+      "refersTo": "change-type-added",
+      "description": "Single-letter file-change indicator. The letter is the accessibility affordance; never drop it.",
+      "html": "<span class=\"ds-ct-added\">A</span>",
+      "css": ".ds-ct-added { display: inline-block; width: 16px; text-align: center; font: 600 11px/1.5 ui-monospace, 'SF Mono', Menlo, monospace; border-radius: 3px; padding: 1px 0; background: rgba(74,222,128,0.18); color: #4ade80; }"
+    },
+    {
+      "name": "File List Item (Active)",
+      "kind": "nav",
+      "refersTo": "file-list-item-active",
+      "description": "Selected file in the sidebar. Active fill is Hairline Blue Fade with a faint inset glow.",
+      "html": "<ul class=\"ds-file-list\"><li class=\"ds-file-item\"><span class=\"ds-ct-added\">A</span><span class=\"ds-file-path\">src/main/index.ts</span></li><li class=\"ds-file-item ds-file-item-active\"><span class=\"ds-ct-added\" style=\"background:rgba(250,204,21,0.18);color:#facc15;\">M</span><span class=\"ds-file-path\">src/renderer/components/DiffViewer.tsx</span></li></ul>",
+      "css": ".ds-file-list { list-style: none; margin: 0; padding: 8px 0; background: #161a22; } .ds-file-item { display: flex; align-items: center; gap: 8px; margin: 2px 8px; padding: 5px 8px; border: 1px solid transparent; border-radius: 6px; cursor: pointer; font: 400 12px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Ubuntu, sans-serif; color: #e6e9ef; } .ds-file-item:hover { background: #1c2230; } .ds-file-item-active { background: #2a3a5e; border-color: rgba(91,141,239,0.32); box-shadow: inset 0 0 0 1px rgba(91,141,239,0.1); } .ds-file-path { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 12px; }"
+    },
+    {
+      "name": "File Section Card",
+      "kind": "card",
+      "refersTo": "file-section",
+      "description": "Signature component. Bordered file container in the continuous diff. content-visibility lets the browser skip layout/paint for off-screen sections — the load-bearing reason 50k-line diffs scroll smoothly.",
+      "html": "<section class=\"ds-file-section\"><header class=\"ds-file-section-head\"><span class=\"ds-file-section-path\">src/renderer/components/DiffViewer.tsx</span><span class=\"ds-file-section-meta\">+24 −12</span></header><div class=\"ds-file-section-body\"><div class=\"ds-diff-row ds-diff-row-add\"><span class=\"ds-diff-gutter\">42</span><span class=\"ds-diff-mark\">+</span><span class=\"ds-diff-content\">const next = computeNextDiff(prev);</span></div><div class=\"ds-diff-row ds-diff-row-del\"><span class=\"ds-diff-gutter\">42</span><span class=\"ds-diff-mark\">−</span><span class=\"ds-diff-content\">const next = old.compute(prev);</span></div></div></section>",
+      "css": ".ds-file-section { border: 1px solid #262d3c; border-radius: 8px; margin: 12px; background: #161a22; overflow: hidden; content-visibility: auto; contain-intrinsic-size: auto 200px; } .ds-file-section-head { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: #161a22; border-bottom: 1px solid #262d3c; font: 600 12px/1.3 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Ubuntu, sans-serif; } .ds-file-section-path { font-family: ui-monospace, 'SF Mono', Menlo, monospace; color: #e6e9ef; flex: 1; } .ds-file-section-meta { color: #8a93a6; font-weight: 400; font-size: 11px; } .ds-file-section-body { background: #0f1115; font: 400 12px/18px ui-monospace, 'SF Mono', Menlo, monospace; } .ds-diff-row { display: grid; grid-template-columns: 48px 18px 1fr; } .ds-diff-gutter { padding: 0 6px; text-align: right; color: #8a93a6; background: #161a22; border-right: 1px solid #262d3c; font-size: 11px; user-select: none; } .ds-diff-mark { padding: 0 6px; text-align: center; color: #8a93a6; user-select: none; } .ds-diff-content { padding: 0 6px; white-space: pre; overflow-x: auto; color: #e6e9ef; } .ds-diff-row-add .ds-diff-content, .ds-diff-row-add .ds-diff-mark { background: rgba(74,222,128,0.12); color: #b9f0c8; } .ds-diff-row-add .ds-diff-gutter { background: rgba(74,222,128,0.08); } .ds-diff-row-del .ds-diff-content, .ds-diff-row-del .ds-diff-mark { background: rgba(248,113,113,0.12); color: #fbc4c4; } .ds-diff-row-del .ds-diff-gutter { background: rgba(248,113,113,0.08); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Native Workshop",
+    "overview": "revu is a quiet, well-made desktop tool laid out on a clean bench. It looks like something a working engineer assembled for themselves — not a piece of marketing, not a generic Electron shell, not a SaaS dashboard. Polish lives in the small things: a real focus ring, a 1px hairline border that knows what it's separating, macOS vibrancy that breathes with the desktop behind it, monospace numerals in the right places, transitions measured in tens of milliseconds. The system rejects loud color, hero metrics, gradient accents, decorative cards, and the entire visual vocabulary of the AWS Console. It rejects the heavy chrome of a generic Electron app. Most of all it rejects anything that would make a reader say 'AI wrote that.' The diff is the product; every other surface earns its space by being out of the way when the reviewer is reading code. Color is restrained. One cool blue accent (Hairline Blue) carries every focus, every active state, every primary intent — and it appears on less than 10% of any given screen. The neutrals form a tight five-step Cool Slate ladder, very slightly tinted toward the accent so the whole surface reads as one piece. Status semantics get four named roles (ok green / warn amber / bad red / neutral) and never bleed beyond their job.",
+    "keyCharacteristics": [
+      "Hairline-first elevation. 1px borders, not shadows, define every edge. Shadows are a Mac affordance, not a structural device.",
+      "Native chrome. macOS gets translucent vibrancy and traffic-light spacing; Windows gets clean opaque panels. Same tokens, different posture.",
+      "Dense, monospace-forward typography. 13px base sans for UI, ui-monospace for code and identifiers. Hierarchy through weight and uppercase labels, not big type.",
+      "Accent as a single voice. One blue. Every focus ring, primary button, active row, and link uses it. Nothing else competes.",
+      "Theme-swap ready, dark-first. The token set is structured so a light theme can land without rewriting components. Today it ships dark only."
+    ],
+    "rules": [
+      { "name": "The One Voice Rule", "body": "Hairline Blue is the only accent. If a new screen needs to highlight something, the answer is Hairline Blue — or a stronger weight, or better hierarchy. Never a second accent color. Never a gradient.", "section": "colors" },
+      { "name": "The 10% Rule", "body": "Hairline Blue covers no more than 10% of any rendered viewport across all its appearances combined (rings, fills, fades, links). When it starts to creep past 10%, something is over-using attention; rework the screen, don't desaturate the blue.", "section": "colors" },
+      { "name": "The Hairline Rule", "body": "Surfaces are separated by 1px borders in Cool Slate 600, not by shadows. If a new surface needs to feel 'lifted,' the right answer is almost always a different background step in the ladder plus the same 1px hairline.", "section": "colors" },
+      { "name": "The Status-Color Lockdown", "body": "Ok / Warn / Bad / Neutral are the only roles those colors serve. Don't use Ok Green for 'saved', don't use Bad Red for 'deleted-but-recoverable', don't introduce a fifth status color.", "section": "colors" },
+      { "name": "The Host-OS Rule", "body": "Never ship a custom font with revu. The body and code stacks are the host operating system's own faces.", "section": "typography" },
+      { "name": "The Tabular-Numerals Rule", "body": "Anywhere numbers are compared at a glance — line numbers, file change counts, PR IDs — use font-variant-numeric: tabular-nums.", "section": "typography" },
+      { "name": "The Uppercase-Label Rule", "body": "Any text styled as Label (11px uppercase, 0.5px letter-spacing, Text Dim) is metadata, not content. Don't write content into labels and don't style content as labels.", "section": "typography" },
+      { "name": "The Flat-By-Default Rule", "body": "New surfaces are flat. They get a 1px hairline, not a shadow. The vibrancy/ambient-shadow treatments on macOS are pre-existing agreements, not a license to add shadows elsewhere.", "section": "elevation" },
+      { "name": "The Vibrancy-Honors-System Rule", "body": "Every backdrop-filter surface is wrapped in @supports not (backdrop-filter) and @media (prefers-reduced-transparency: reduce) fallbacks that swap to a solid fill. Both are non-negotiable.", "section": "elevation" },
+      { "name": "The No-Shadow-On-Dark Rule", "body": "Drop shadows on a dark base are noise; they muddy the surface without adding hierarchy. The only exception is the macOS ambient card shadow.", "section": "elevation" },
+      { "name": "The Hairline-Border Rule", "body": "Every visible boundary in revu is a 1px Cool Slate 600 border. Not 2px, not 3px, not a side-stripe, not a gradient.", "section": "components" },
+      { "name": "The No-Card-Nesting Rule", "body": "Cards live directly on the page background. They never contain another card. If you find yourself wrapping a card in a card, the inner thing isn't a card — it's a section.", "section": "components" },
+      { "name": "The 28px-Control Rule", "body": "Every interactive control has a minimum height of 28px. This is the keyboard-target floor and the visual rhythm.", "section": "components" }
+    ],
+    "dos": [
+      "Do use a single 1px Cool Slate 600 (#262d3c) border for every surface boundary. Two layouts that look 'different' usually want different background steps in the Cool Slate ladder, not different borders.",
+      "Do keep Hairline Blue (#5b8def) on ≤10% of any screen, combined across rings/fills/links/active states. Restraint IS the brand.",
+      "Do put prefers-reduced-transparency fallbacks on every new backdrop-filter surface in the same commit. The pattern lives at the bottom of index.css; copy it.",
+      "Do add a prefers-reduced-motion block as new transitions are introduced — PRODUCT.md commits to honoring it. Today index.css only handles prefers-reduced-transparency. Close the gap as motion is added.",
+      "Do route every new color through one of the existing tokens. If a new color is needed, raise it as a token-set change, not a one-off hex in a component.",
+      "Do assume the reviewer is an engineer. Terse labels, monospace where it matters, no tooltips explaining git or PRs.",
+      "Do use the Label step (11px uppercase, 0.5px letter-spacing, Text Dim) for metadata. The uppercase IS the hierarchy.",
+      "Do keep diff row heights at exactly 18px. The continuous-diff virtualization in FileDiffSection computes placeholder heights from this constant.",
+      "Do structure new tokens so a light theme can drop in alongside the dark set without rewriting components. PRODUCT.md commits to shipping a real light theme; design for theme-swap from day one."
+    ],
+    "donts": [
+      "Don't ship anything that looks like the AWS Console. Orange accents, dense form layouts, generic enterprise chrome — none of it. We're the antidote.",
+      "Don't ship anything that looks like a generic Slack-shaped Electron app. Heavy custom title bars, non-native scrollbars, oversized avatars, emoji garnish, mismatched window controls. The fact that we're in Electron should be invisible.",
+      "Don't introduce SaaS dashboard clichés: big hero metric tiles, gradient accents, decorative card grids, hero-illustrated empty states, AI-generated icon sets, a cheerful welcome screen. revu has no marketing surface — don't smuggle one in.",
+      "Don't ship AI-coded slop: glassmorphism for its own sake, gradient text (background-clip: text), side-stripe borders (border-left: 4px solid ...), identical card grids with icon + heading + text repeated, emoji in section headings, or copy that restates the heading.",
+      "Don't introduce a second accent color. The One Voice Rule is the whole point.",
+      "Don't add drop shadows on dark surfaces. The macOS vibrancy + ambient card shadow is the only exception, and it's a platform affordance, not a general license.",
+      "Don't nest cards. If you reach for a second border inside a .file-section or a .composer, restructure with hairline dividers and tonal layering instead.",
+      "Don't rely on color alone for status. Every status surface (badges, change-type chips, diff rows) carries both a label/letter AND a color.",
+      "Don't ship a custom font. The body and code stacks are the host operating system's own faces; that's the Native Workshop.",
+      "Don't use border-left or border-right greater than 1px as a colored accent. Side-stripe borders are the universal slop tell.",
+      "Don't use em dashes in UI copy or commit messages. PRODUCT.md commits to terse, native copy; ASCII punctuation only.",
+      "Don't animate CSS layout properties (width, height, margin, padding). If something needs to move, animate transform and opacity.",
+      "Don't let the diff body decorate itself. Inside .continuous-diff, only the Hairline Blue hover '+' button is a permitted persistent affordance."
+    ]
+  }
+}

@@ -56,6 +56,14 @@ Never hardcode or commit credentials.
 - State assumptions explicitly instead of guessing silently.
 - Keep module boundaries clean so the provider swap stays contained.
 
+## Design context
+- Strategic design context (register, users, brand personality, anti-references,
+  design principles, accessibility) lives in `PRODUCT.md` at the project root.
+- Visual system (colors, typography, component tokens) will live in `DESIGN.md`
+  at the project root once generated.
+- Both are maintained via the `/impeccable` skill. Read PRODUCT.md before making
+  UI decisions; it overrides defaults from training data.
+
 ## Git commits
 - **Never** add a `Co-Authored-By: Claude …` trailer (or any Claude/Anthropic
   attribution) to commit messages on this project. Author commits as if written
