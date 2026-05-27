@@ -9,6 +9,7 @@ import {
 } from './components/PRFilters';
 import { PRList } from './components/PRList';
 import { PRDetail } from './components/PRDetail';
+import { KeyboardHelpOverlay } from './components/KeyboardHelpOverlay';
 
 const DEFAULT_FILTERS: FilterState = {
   status: 'OPEN',
@@ -28,6 +29,7 @@ export function App(): JSX.Element {
   const [error, setError] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [view, setView] = useState<View>({ kind: 'list' });
+  const [helpOpen, setHelpOpen] = useState(false);
 
   useEffect(() => {
     unwrap(api.settings.get())
@@ -107,6 +109,7 @@ export function App(): JSX.Element {
   // that PRODUCT.md commits to but the mouse-only flow couldn't deliver.
   useEffect(() => {
     if (view.kind !== 'list') return;
+    if (helpOpen) return;
     function onKey(e: KeyboardEvent): void {
       const tag = (e.target as HTMLElement | null)?.tagName;
       const isTyping = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
@@ -125,7 +128,24 @@ export function App(): JSX.Element {
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [view.kind, filters.search]);
+  }, [view.kind, filters.search, helpOpen]);
+
+  // Global help-overlay toggle. `?` opens (Shift+/ on US layouts), Cmd/Ctrl+/
+  // is the editor-shaped alt. Closing is handled inside the overlay so the
+  // listener there owns Esc capture.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent): void {
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      const isTyping = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+      if (isTyping) return;
+      if (e.key === '?' || ((e.metaKey || e.ctrlKey) && e.key === '/')) {
+        e.preventDefault();
+        setHelpOpen((v) => !v);
+      }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   if (!settings) {
     return <div className="loading">Loading settings…</div>;
@@ -139,6 +159,10 @@ export function App(): JSX.Element {
           pullRequest={view.pr}
           onBack={() => setView({ kind: 'list' })}
         />
+        <KeyboardHelpOverlay
+          open={helpOpen}
+          onClose={() => setHelpOpen(false)}
+        />
       </div>
     );
   }
@@ -149,6 +173,13 @@ export function App(): JSX.Element {
         <div className="brand">revu</div>
         <span className="grow" />
         <SettingsSummary settings={settings} />
+        <button
+          onClick={() => setHelpOpen(true)}
+          title="Keyboard shortcuts (?)"
+          aria-label="Keyboard shortcuts"
+        >
+          ?
+        </button>
         <button onClick={() => setSettingsOpen((v) => !v)}>
           {settingsOpen ? 'Close settings' : 'Settings'}
         </button>
@@ -184,6 +215,10 @@ export function App(): JSX.Element {
           <PRList prs={visible} onOpen={(pr) => setView({ kind: 'detail', pr })} />
         )}
       </div>
+      <KeyboardHelpOverlay
+        open={helpOpen}
+        onClose={() => setHelpOpen(false)}
+      />
     </div>
   );
 }

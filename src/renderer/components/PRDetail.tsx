@@ -351,6 +351,15 @@ export function PRDetail({
         <div className="error">
           <div>Could not load PR data.</div>
           <pre>{loadError}</pre>
+          <div className="error-actions">
+            <button
+              className="primary"
+              onClick={() => void onRefresh()}
+              disabled={refreshing}
+            >
+              {refreshing ? 'Retrying…' : 'Retry'}
+            </button>
+          </div>
         </div>
       </div>
     );

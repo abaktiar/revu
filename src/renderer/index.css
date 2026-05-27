@@ -374,7 +374,7 @@ table.prs tbody tr:focus-visible,
 table.prs th:focus-visible {
   outline: none;
   background: var(--panel-2);
-  box-shadow: inset 0 0 0 2px var(--accent);
+  box-shadow: inset 0 0 0 2px var(--focus-ring);
 }
 
 .id {
@@ -584,6 +584,13 @@ table.prs th:focus-visible {
   max-width: 720px;
   white-space: pre-wrap;
   color: var(--text);
+}
+
+.error-actions {
+  margin-top: 16px;
+  display: flex;
+  justify-content: center;
+  gap: 8px;
 }
 
 /* ---- PR detail --------------------------------------------------------- */
@@ -1375,6 +1382,96 @@ table.prs tr.clickable {
   cursor: pointer;
 }
 
+/* ---- Keyboard shortcut overlay -------------------------------------- */
+
+.help-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  -webkit-app-region: no-drag;
+}
+
+.help-panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px 20px;
+  min-width: 360px;
+  max-width: 480px;
+  max-height: 80vh;
+  overflow-y: auto;
+  outline: none;
+}
+
+.help-panel:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.help-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.help-head h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.help-group + .help-group {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.help-group-label {
+  color: var(--text-dim);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+}
+
+.help-group ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: minmax(120px, auto) 1fr;
+  row-gap: 6px;
+  column-gap: 12px;
+  align-items: center;
+}
+
+.help-group li {
+  display: contents;
+}
+
+.help-keys {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.help-or {
+  color: var(--text-dim);
+  font-size: 11px;
+  margin: 0 2px;
+}
+
+.help-desc {
+  color: var(--text);
+  font-size: 12px;
+}
+
 /* ---- Platform polish -------------------------------------------------- */
 
 .platform-darwin {
@@ -1439,7 +1536,7 @@ table.prs tr.clickable {
 .platform-darwin table.prs tbody tr:focus-visible,
 .platform-darwin table.prs th:focus-visible {
   background: rgba(255, 255, 255, 0.08);
-  box-shadow: inset 0 0 0 2px rgba(127, 166, 255, 0.7);
+  box-shadow: inset 0 0 0 2px var(--focus-ring);
 }
 
 .platform-darwin .file-sidebar {

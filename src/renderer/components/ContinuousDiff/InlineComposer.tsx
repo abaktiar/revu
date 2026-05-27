@@ -1,14 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { RelativeFileVersion } from '@shared/types';
 
-// How long to wait after the last keystroke before persisting the draft. Long
-// enough to coalesce rapid typing into one round-trip; short enough that the
-// "Saved" indicator appears soon after the reviewer stops.
-const AUTOSAVE_DEBOUNCE_MS = 500;
-// Cadence for refreshing the "Xs ago" relative time in the indicator. Cheap
-// enough that the savings of a slower interval don't justify the stale label.
-const RELATIVE_TICK_MS = 10_000;
-
 interface Props {
   side: RelativeFileVersion;
   filePath: string;
@@ -36,14 +28,10 @@ export function InlineComposer({
 }: Props): JSX.Element {
   const [text, setText] = useState(initialContent);
   const [err, setErr] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [savedAt, setSavedAt] = useState<number | null>(
-    initialContent ? Date.now() : null,
-  );
-  const [saveError, setSaveError] = useState<string | null>(null);
-  const [, forceTick] = useState(0);
+  const [confirming, setConfirming] = useState(false);
+  const [savingDraft, setSavingDraft] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const lastSavedTextRef = useRef<string>(initialContent);
+  const saveDraftBtnRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     const ta = textareaRef.current;
@@ -53,39 +41,18 @@ export function InlineComposer({
     ta.setSelectionRange(end, end);
   }, []);
 
-  // Debounced auto-save. Skips empty text (no point persisting an empty
-  // draft) and skips when the text is unchanged from the last successful save
-  // (avoids a save round-trip on every focus/blur). The save call is fire-and-
-  // forget at the React layer; errors surface as `saveError` and the draft
-  // stays editable.
+  // Move keyboard focus to the primary "Save draft" action when the confirm
+  // prompt opens. Esc still returns to edit (handled in onKeyDown below), so
+  // the keyboard path is: type · Esc · (focused) Save draft / Tab to Discard.
   useEffect(() => {
-    if (text === lastSavedTextRef.current) return;
-    if (!text.trim()) return;
-    const handle = setTimeout(() => {
-      const snapshot = text;
-      setSaving(true);
-      setSaveError(null);
-      onSaveDraft(snapshot)
-        .then(() => {
-          lastSavedTextRef.current = snapshot;
-          setSavedAt(Date.now());
-        })
-        .catch((e: unknown) => {
-          setSaveError(e instanceof Error ? e.message : String(e));
-        })
-        .finally(() => setSaving(false));
-    }, AUTOSAVE_DEBOUNCE_MS);
-    return () => clearTimeout(handle);
-  }, [text, onSaveDraft]);
+    if (confirming) saveDraftBtnRef.current?.focus();
+  }, [confirming]);
 
-  // Re-render every 10s so "12s ago" advances. The interval only runs while
-  // there's a saved timestamp to refresh, so an idle composer with no draft
-  // pays zero.
-  useEffect(() => {
-    if (savedAt === null) return;
-    const id = setInterval(() => forceTick((n) => n + 1), RELATIVE_TICK_MS);
-    return () => clearInterval(id);
-  }, [savedAt]);
+  // "Has the reviewer typed something worth preserving?" Empty text never
+  // prompts (lets the user bail without ceremony), and text identical to the
+  // existing draft body never prompts (no changes to save).
+  const hasUnsavedChanges =
+    text.trim() !== '' && text !== initialContent;
 
   async function wrap(fn: () => Promise<void>): Promise<void> {
     setErr(null);
@@ -96,13 +63,47 @@ export function InlineComposer({
     }
   }
 
+  function requestClose(): void {
+    if (hasUnsavedChanges) {
+      setConfirming(true);
+    } else {
+      onCancel();
+    }
+  }
+
+  async function saveAndClose(): Promise<void> {
+    setSavingDraft(true);
+    setErr(null);
+    try {
+      await onSaveDraft(text);
+      onCancel();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+      setConfirming(false);
+    } finally {
+      setSavingDraft(false);
+    }
+  }
+
+  function discardAndClose(): void {
+    setConfirming(false);
+    onCancel();
+  }
+
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>): void {
+    if (confirming) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setConfirming(false);
+      }
+      return;
+    }
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
       e.preventDefault();
       if (text.trim() && !posting) void wrap(() => onPost(text));
     } else if (e.key === 'Escape') {
       e.preventDefault();
-      onCancel();
+      requestClose();
     }
   }
 
@@ -113,15 +114,9 @@ export function InlineComposer({
           New comment · <code>{filePath}</code>:<b>{line}</b> · {side}
         </span>
         <span className="grow" />
-        <DraftStatus
-          saving={saving}
-          savedAt={savedAt}
-          saveError={saveError}
-          hasText={text.trim().length > 0}
-        />
         <span className="kbd-hint">
           <kbd>{macish() ? '⌘' : 'Ctrl'}</kbd>+<kbd>↵</kbd> post ·{' '}
-          <kbd>Esc</kbd> cancel
+          <kbd>Esc</kbd> close
         </span>
       </div>
       <textarea
@@ -131,61 +126,51 @@ export function InlineComposer({
         onChange={(e) => setText(e.target.value)}
         onKeyDown={onKeyDown}
         placeholder="Leave a comment…"
+        readOnly={confirming}
       />
-      <div className="inline-composer-actions">
-        {err && <span className="hint warn">{err}</span>}
-        <span className="grow" />
-        {draftId && (
-          <button onClick={() => void wrap(() => onDeleteDraft())}>
-            Delete draft
+      {confirming ? (
+        <div className="inline-composer-actions confirming">
+          <span className="hint">Save changes as a draft?</span>
+          <span className="grow" />
+          <button
+            onClick={() => setConfirming(false)}
+            disabled={savingDraft}
+          >
+            Keep editing
           </button>
-        )}
-        <button onClick={onCancel}>Cancel</button>
-        <button
-          className="primary"
-          onClick={() => void wrap(() => onPost(text))}
-          disabled={posting || !text.trim()}
-        >
-          {posting ? 'Posting…' : 'Post comment'}
-        </button>
-      </div>
+          <button onClick={discardAndClose} disabled={savingDraft}>
+            Discard
+          </button>
+          <button
+            ref={saveDraftBtnRef}
+            className="primary"
+            onClick={() => void saveAndClose()}
+            disabled={savingDraft}
+          >
+            {savingDraft ? 'Saving…' : 'Save draft'}
+          </button>
+        </div>
+      ) : (
+        <div className="inline-composer-actions">
+          {err && <span className="hint warn">{err}</span>}
+          <span className="grow" />
+          {draftId && (
+            <button onClick={() => void wrap(() => onDeleteDraft())}>
+              Delete draft
+            </button>
+          )}
+          <button onClick={requestClose}>Close</button>
+          <button
+            className="primary"
+            onClick={() => void wrap(() => onPost(text))}
+            disabled={posting || !text.trim()}
+          >
+            {posting ? 'Posting…' : 'Post comment'}
+          </button>
+        </div>
+      )}
     </div>
   );
-}
-
-function DraftStatus({
-  saving,
-  savedAt,
-  saveError,
-  hasText,
-}: {
-  saving: boolean;
-  savedAt: number | null;
-  saveError: string | null;
-  hasText: boolean;
-}): JSX.Element | null {
-  if (saveError) {
-    return (
-      <span className="hint warn" title={saveError}>
-        Could not save draft
-      </span>
-    );
-  }
-  if (saving) {
-    return <span className="hint">Saving…</span>;
-  }
-  if (savedAt !== null && hasText) {
-    return <span className="hint">Draft saved {fmtRel(savedAt)}</span>;
-  }
-  return null;
-}
-
-function fmtRel(ts: number): string {
-  const diff = Date.now() - ts;
-  if (diff < 5_000) return 'just now';
-  if (diff < 60_000) return `${Math.round(diff / 1000)}s ago`;
-  if (diff < 3_600_000) return `${Math.round(diff / 60_000)}m ago`;
-  return `${Math.round(diff / 3_600_000)}h ago`;
 }
 
 function macish(): boolean {
