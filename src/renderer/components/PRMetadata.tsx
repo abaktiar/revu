@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import type {
+  ApprovalStateEntry,
   PRDifferences,
+  PullRequestApprovalView,
   PullRequestDetail,
   PullRequestMergeability,
   PullRequestTarget,
@@ -11,21 +13,32 @@ interface Props {
   detail: PullRequestDetail;
   differences: PRDifferences | null;
   mergeability: PullRequestMergeability | null;
+  approval: PullRequestApprovalView | null;
   approvalCount: number;
   fileCount: number;
   selfApproved: boolean;
+  // Provider-built deep-link to the PR's web UI. Undefined when the provider
+  // can't construct one (e.g. no region configured).
+  webUrl?: string;
 }
 
 export function PRMetadata({
   detail,
   differences,
   mergeability,
+  approval,
   approvalCount,
   fileCount,
   selfApproved,
+  webUrl,
 }: Props): JSX.Element {
-  const [descOpen, setDescOpen] = useState(false);
+  // Long descriptions get collapsed by default with a "Show more" toggle so
+  // they don't push the diff out of view. Short ones render inline.
+  const [descExpanded, setDescExpanded] = useState(false);
   const target = pickTarget(detail.targets, differences);
+  const approvers = (approval?.states ?? []).filter(
+    (s) => s.approvalState === 'APPROVE',
+  );
 
   const source = stripRefs(target?.sourceReference ?? detail.targets[0]?.sourceReference ?? '');
   const dest = stripRefs(
@@ -85,34 +98,162 @@ export function PRMetadata({
         <span className="hint" title={detail.lastActivityAt}>
           {fmtRel(detail.lastActivityAt)}
         </span>
+        {webUrl && (
+          <>
+            <span className="grow" />
+            <button
+              type="button"
+              className="link pr-aws-link"
+              title="Open this PR in the AWS CodeCommit console"
+              onClick={() => {
+                // Use window.open so Electron's setWindowOpenHandler routes
+                // it to shell.openExternal. The pr-meta surface isn't a
+                // window-drag region, but going through window.open also
+                // avoids any future drag/region regressions on a click handler.
+                window.open(webUrl, '_blank', 'noopener,noreferrer');
+              }}
+            >
+              Open in AWS ↗
+            </button>
+          </>
+        )}
       </div>
 
-      {detail.description && (
+      {mergeability?.state === 'already_merged' && (
         <div className="pr-meta-row">
-          <span className="pr-meta-label">Description</span>
-          <button
-            className="link"
-            onClick={() => setDescOpen((v) => !v)}
-          >
-            {descOpen ? 'Hide' : 'Show'}
-          </button>
-          {descOpen && (
-            <div className="pr-description">
-              <Markdown source={detail.description} />
-            </div>
+          <span className="pr-meta-label">Merged</span>
+          {mergeability.mergedBy ? (
+            <code className="who">{shortArn(mergeability.mergedBy)}</code>
+          ) : (
+            <span className="hint">unknown user</span>
           )}
+          {mergeability.mergedAt && (
+            <>
+              <span className="hint">·</span>
+              <span className="hint" title={mergeability.mergedAt}>
+                {fmtRel(mergeability.mergedAt)}
+              </span>
+            </>
+          )}
+          {mergeability.mergedWith && (
+            <>
+              <span className="hint">·</span>
+              <span className="hint">
+                via {labelForMergeOption(mergeability.mergedWith)}
+              </span>
+            </>
+          )}
+          {mergeability.mergeCommitId && (
+            <code className="commit-pair-code" title={mergeability.mergeCommitId}>
+              {mergeability.mergeCommitId.slice(0, 7)}
+            </code>
+          )}
+        </div>
+      )}
+
+      {mergeability?.state === 'closed_unmerged' && (
+        <div className="pr-meta-row">
+          <span className="pr-meta-label">Closed</span>
+          {mergeability.closedBy ? (
+            <code className="who">{shortArn(mergeability.closedBy)}</code>
+          ) : (
+            <span className="hint">unknown user</span>
+          )}
+          {mergeability.closedAt && (
+            <>
+              <span className="hint">·</span>
+              <span className="hint" title={mergeability.closedAt}>
+                {fmtRel(mergeability.closedAt)}
+              </span>
+            </>
+          )}
+          <span className="hint">· without merging</span>
+        </div>
+      )}
+
+      {approvers.length > 0 && (
+        <div className="pr-meta-row pr-approvers-row">
+          <span className="pr-meta-label">Approved by</span>
+          <ul className="pr-approvers">
+            {approvers.map((a) => (
+              <ApproverChip
+                key={a.userArn}
+                entry={a}
+                isSelf={!!approval?.selfArn && a.userArn === approval.selfArn}
+              />
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {detail.description && (
+        <div className="pr-meta-row pr-description-row">
+          <span className="pr-meta-label">Description</span>
+          <div
+            className={`pr-description${descExpanded ? ' is-expanded' : ''}`}
+          >
+            <Markdown source={detail.description} />
+            <button
+              type="button"
+              className="pr-description-toggle"
+              onClick={() => setDescExpanded((v) => !v)}
+            >
+              {descExpanded ? 'Show less' : 'Show more'}
+            </button>
+          </div>
         </div>
       )}
     </div>
   );
 }
 
+function ApproverChip({
+  entry,
+  isSelf,
+}: {
+  entry: ApprovalStateEntry;
+  isSelf: boolean;
+}): JSX.Element {
+  return (
+    <li className="pr-approver" title={entry.userArn}>
+      <span className="pr-approver-check" aria-hidden="true">
+        ✓
+      </span>
+      <code className="who">{shortArn(entry.userArn)}</code>
+      {isSelf && <span className="pr-approver-self">you</span>}
+      {entry.changedAt && (
+        <span className="hint" title={entry.changedAt}>
+          {fmtRel(entry.changedAt)}
+        </span>
+      )}
+    </li>
+  );
+}
+
+function labelForMergeOption(opt: string): string {
+  switch (opt) {
+    case 'FAST_FORWARD_MERGE':
+      return 'fast-forward';
+    case 'SQUASH_MERGE':
+      return 'squash';
+    case 'THREE_WAY_MERGE':
+      return 'three-way merge';
+    default:
+      return opt;
+  }
+}
+
 function MergeabilityBadge({
   m,
 }: {
   m: PullRequestMergeability;
-}): JSX.Element {
+}): JSX.Element | null {
   switch (m.state) {
+    // Closed-without-merge already shows up as the "CLOSED" status badge
+    // (rendered by the parent) plus a "Closed by X · Y ago" row. A second
+    // badge here would just be noise.
+    case 'closed_unmerged':
+      return null;
     case 'already_merged': {
       const title = m.mergedBy
         ? `Merged by ${shortArn(m.mergedBy)}` +

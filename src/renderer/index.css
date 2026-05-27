@@ -309,6 +309,27 @@ table.prs tr.clickable {
   color: var(--bad);
 }
 
+/* Inline error rendered next to a Settings control: short, scoped to the
+   panel rather than full-width like ErrorBanner. The hint line below the
+   main message keeps the AWS suggestion ("refresh credentials in Settings",
+   etc.) visible without taking over the layout. */
+.settings-inline-error {
+  display: block;
+  max-width: 520px;
+  padding: 8px 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--bad);
+  border-radius: 6px;
+  line-height: 1.4;
+}
+
+.settings-inline-error-hint {
+  margin-top: 4px;
+  color: var(--text-dim);
+  font-size: 11.5px;
+}
+
 .grow {
   flex: 1;
 }
@@ -563,35 +584,174 @@ table.prs th:focus-visible {
 }
 
 .empty,
-.error,
 .loading {
   padding: 40px;
   text-align: center;
   color: var(--text-dim);
 }
 
+/* ErrorBanner: shared error UI rendered whenever an IPC call surfaces a
+   ProviderError (AWS throttle, expired creds, access denied, etc.). The
+   classified hint sits below the raw message so the user always sees a
+   next-action without having to interpret the AWS text. */
 .error {
-  color: var(--bad);
-}
-
-.error pre {
-  text-align: left;
+  max-width: 720px;
+  margin: 24px auto;
+  padding: 18px 20px;
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 12px;
-  margin: 12px auto 0;
-  max-width: 720px;
-  white-space: pre-wrap;
+  border-left: 3px solid var(--bad);
+  border-radius: 8px;
   color: var(--text);
+  text-align: left;
+}
+
+.error-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--bad);
+  margin-bottom: 8px;
+}
+
+.error-icon {
+  font-size: 16px;
+  line-height: 1;
+}
+
+.error-message {
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.error-hint {
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-dim);
+  font-size: 12.5px;
+  line-height: 1.5;
 }
 
 .error-actions {
-  margin-top: 16px;
+  margin-top: 14px;
   display: flex;
-  justify-content: center;
   gap: 8px;
 }
+
+/* Inline loading chip rendered in PRFilters in place of the Refresh button
+   while a streaming PR-list session is active. Compact — shouldn't displace
+   the filter controls. Includes a thin progress bar so the user sees motion
+   even when individual items take a moment to land. */
+.loading-chip {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 180px;
+  padding: 4px 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.loading-chip-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.loading-chip-text {
+  font-size: 12.5px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.loading-chip-text strong {
+  color: var(--text);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.loading-chip-spinner {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border);
+  border-top-color: var(--accent);
+  animation: loading-chip-spin 700ms linear infinite;
+}
+
+@keyframes loading-chip-spin {
+  to { transform: rotate(360deg); }
+}
+
+.loading-chip-cancel {
+  margin-left: auto;
+  padding: 2px 8px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-dim);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.loading-chip-cancel:hover {
+  color: var(--bad);
+  border-color: var(--bad);
+}
+
+.loading-chip-bar {
+  height: 3px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.loading-chip-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 120ms ease-out;
+}
+
+/* Banner above a capped PR list. Sits in the natural document flow so the
+   list scrolls underneath it; a Load more button continues the stream from
+   where it left off (see App.tsx loadMore). */
+.truncation-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  margin: 0 0 8px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+
+.truncation-banner strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.truncation-banner button {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+/* Subtle per-code accent so the type of failure registers at a glance. */
+.error.error-throttled { border-left-color: var(--warn, #d9a441); }
+.error.error-credentials_expired,
+.error.error-credentials_missing { border-left-color: var(--warn, #d9a441); }
+.error.error-network,
+.error.error-timeout { border-left-color: var(--text-dim); }
 
 /* ---- PR detail --------------------------------------------------------- */
 
@@ -899,6 +1059,68 @@ kbd {
   color: var(--text-dim);
 }
 
+/* Compact, inline branch pair used in the PR list "Target" column. The
+ * branches use the same .branch chip styling as elsewhere, but here we
+ * clamp width and ellipsis so long feature branches don't expand the
+ * column unboundedly. */
+.branch-pair {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 280px;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.branch-pair .branch {
+  max-width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-block;
+}
+
+td.target-cell {
+  white-space: nowrap;
+}
+
+/* Per-row external link button. Quiet by default, brightens on row hover so
+ * it doesn't compete with the title but is still discoverable. Stops click
+ * propagation so it doesn't trigger the row's "open in app" handler. */
+td.row-actions {
+  width: 28px;
+  text-align: right;
+  padding-right: 8px;
+}
+
+.row-external {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 120ms ease,
+    background-color 120ms ease,
+    color 120ms ease;
+  box-shadow: none;
+}
+
+table.prs tr.clickable:hover .row-external,
+table.prs tr.clickable:focus-within .row-external,
+.row-external:focus-visible {
+  opacity: 1;
+}
+
+.row-external:hover {
+  background: rgba(91, 141, 239, 0.14);
+  color: var(--accent);
+}
+
 .commit-pair {
   display: inline-flex;
   align-items: center;
@@ -934,15 +1156,145 @@ kbd {
   text-decoration: underline;
 }
 
+.pr-description-row {
+  align-items: flex-start;
+}
+
 .pr-description {
-  flex-basis: 100%;
+  flex: 1 1 0;
   background: var(--panel-2);
   border: 1px solid var(--border);
   border-radius: 6px;
-  padding: 10px 12px;
+  padding: 10px 12px 28px;
   margin: 6px 0 0;
-  max-height: 360px;
+  position: relative;
+  max-height: 7.5em;
+  overflow: hidden;
+  transition: max-height 200ms ease;
+}
+
+.pr-description.is-expanded {
+  max-height: 60vh;
   overflow: auto;
+}
+
+/* Soft fade at the bottom while collapsed, so the user reads it as "more
+ * below" rather than a hard cut. Removed when expanded. */
+.pr-description::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 22px;
+  height: 24px;
+  background: linear-gradient(
+    to bottom,
+    rgba(28, 34, 48, 0),
+    var(--panel-2) 90%
+  );
+  pointer-events: none;
+}
+
+.pr-description.is-expanded::after {
+  display: none;
+}
+
+.pr-description-toggle {
+  position: absolute;
+  right: 8px;
+  bottom: 4px;
+  background: transparent;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  box-shadow: none;
+}
+
+.pr-description-toggle:hover {
+  background: rgba(91, 141, 239, 0.12);
+}
+
+/* ---- Approvers chip list -------------------------------------------- */
+
+.pr-approvers-row {
+  align-items: flex-start;
+}
+
+.pr-approvers {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  flex: 1 1 0;
+}
+
+.pr-approver {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  background: rgba(74, 222, 128, 0.1);
+  border: 1px solid rgba(74, 222, 128, 0.32);
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.pr-approver .who {
+  background: transparent;
+  border: none;
+  padding: 0;
+  font-size: 11px;
+}
+
+.pr-approver-check {
+  color: var(--ok);
+  font-weight: 600;
+}
+
+.pr-approver-self {
+  background: rgba(91, 141, 239, 0.18);
+  color: var(--accent);
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+/* Reused tiny code chip for the merge commit id in the "Merged" row */
+.commit-pair-code {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+/* "Open in AWS ↗" sits at the right edge of the Author row in the details
+ * panel. Sized like a quiet link, brightens on hover, no border so it stays
+ * out of the grid of badges. */
+.pr-aws-link {
+  text-decoration: none;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  cursor: pointer;
+}
+
+.pr-aws-link:hover {
+  background: rgba(91, 141, 239, 0.12);
+  text-decoration: underline;
 }
 
 .file-section {
@@ -950,14 +1302,10 @@ kbd {
   border-radius: 8px;
   margin: 12px;
   background: var(--panel);
-  overflow: hidden;
-  /* Browser-level virtualization: skip layout+paint for off-screen sections
-   * entirely. contain-intrinsic-size reserves space until first measurement,
-   * then the browser remembers the real size. This is the difference between
-   * 30 loaded files paginating one viewport at a time vs all of them
-   * relayouting on every scroll tick. */
-  content-visibility: auto;
-  contain-intrinsic-size: auto 600px;
+  /* No overflow:hidden and no content-visibility here — both interfere with
+   * the sticky header's ability to pin against .continuous-diff. Containment
+   * lives on .file-section-body instead, which still virtualizes all the
+   * expensive content (diff rows, threads, composers). */
 }
 
 .file-section.is-reviewed {
@@ -966,15 +1314,45 @@ kbd {
 
 .file-section-head {
   position: sticky;
+  /* Stick to the top of .continuous-diff. */
   top: 0;
-  z-index: 2;
+  z-index: 3;
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
   background: var(--panel);
-  border-bottom: 1px solid var(--border);
+  border: 1px solid transparent;
+  border-bottom-color: var(--border);
+  /* Match the file-section's top corners so the header doesn't poke past
+   * the rounded card outline when it's resting (not yet pinned). */
+  border-top-left-radius: 8px;
+  border-top-right-radius: 8px;
   font-size: 12px;
+  transition:
+    border-radius 120ms ease,
+    box-shadow 160ms ease,
+    border-color 160ms ease;
+}
+
+/* When pinned (top edge of section scrolled past the scroll container's top),
+ * the header reads as an anchored bar: square top corners + a subtle
+ * elevation shadow + a solid bottom border. We toggle the class from JS via
+ * IntersectionObserver on a 1px sentinel above the section. */
+.file-section-head.is-pinned {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  border-bottom-color: var(--border);
+  box-shadow: 0 6px 14px -8px rgba(0, 0, 0, 0.55);
+}
+
+/* 1px sentinel placed just above the header — we observe its intersection
+ * with the scroll container's top edge to know when the header is pinned.
+ * Sized to zero visible footprint. */
+.file-section-pin-sentinel {
+  height: 1px;
+  margin-top: -1px;
+  pointer-events: none;
 }
 
 .file-section-head .path {
@@ -991,6 +1369,16 @@ kbd {
 
 .file-section-body {
   background: var(--bg);
+  /* Browser-level virtualization moved here from .file-section so the sticky
+   * header above isn't clipped by paint containment. The body still owns the
+   * heavy content, so the perf win is preserved. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 600px;
+  /* Round only the bottom corners so the body meshes cleanly with the
+   * header's (possibly square, when pinned) bottom edge. */
+  border-bottom-left-radius: 8px;
+  border-bottom-right-radius: 8px;
+  overflow: hidden;
 }
 
 /* Each hunk lives inside its own wrapper. While unmounted, the wrapper is a
@@ -1136,31 +1524,128 @@ kbd {
   padding: 8px 12px;
 }
 
+/* VS Code / GitHub-style expand band. A single thin row with three
+ * targets: small edge buttons (↑20 / ↓20) and a wide middle band that
+ * expands all (or pulls from the nearer end). The whole thing reads as
+ * one quiet ghost surface — no chunky buttons fighting the diff. */
 .expand-gap {
+  display: grid;
+  grid-template-columns: 40px 1fr 40px;
+  align-items: stretch;
+  min-height: 22px;
+  background: var(--panel-2);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-dim);
+  position: relative;
+}
+
+.expand-gap.is-busy {
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.expand-edge {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 4px 12px;
-  background: var(--panel);
-  border-top: 1px dashed var(--border);
-  border-bottom: 1px dashed var(--border);
-  font-size: 11px;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  margin: 0;
+  color: var(--text-dim);
+  cursor: pointer;
+  box-shadow: none;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
 }
 
-.expand-gap > .dgutter,
-.expand-gap > .dmark {
-  display: none; /* not part of the grid here */
+.expand-edge:hover:not(:disabled) {
+  background: rgba(91, 141, 239, 0.12);
+  color: var(--accent);
 }
 
-.expand-controls {
+.expand-edge:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.expand-edge.expand-edge-spacer {
+  cursor: default;
+  pointer-events: none;
+}
+
+.expand-band {
   display: flex;
+  align-items: center;
+  justify-content: center;
   gap: 8px;
-  align-items: center;
+  background: transparent;
+  border: none;
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  border-radius: 0;
+  padding: 0 12px;
+  margin: 0;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1;
+  box-shadow: none;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
 }
 
-.expand-controls button {
-  font-size: 11px;
-  padding: 2px 8px;
+.expand-band:hover:not(:disabled) {
+  background: rgba(91, 141, 239, 0.1);
+  color: var(--accent);
+}
+
+.expand-band:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.expand-band-icon {
+  flex: 0 0 auto;
+  opacity: 0.85;
+}
+
+.expand-band-label {
+  letter-spacing: 0.2px;
+}
+
+.expand-gap .hint.warn {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 10px;
+  color: var(--bad);
+  background: var(--panel);
+  padding: 1px 6px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+}
+
+/* Native macOS button gradient looks out of place on the flat band. Strip
+ * it for the edge + band buttons specifically. */
+.platform-darwin .expand-edge,
+.platform-darwin .expand-band {
+  background: transparent;
+  border-color: var(--border);
+  box-shadow: none;
+}
+
+.platform-darwin .expand-edge:hover:not(:disabled),
+.platform-darwin .expand-band:hover:not(:disabled) {
+  background: rgba(91, 141, 239, 0.14);
+  border-color: var(--border);
 }
 
 .inline-composer,
@@ -1308,6 +1793,7 @@ kbd {
 
 .comment-head {
   display: flex;
+  align-items: center;
   gap: 10px;
   font-size: 11px;
   color: var(--text-dim);
@@ -1316,6 +1802,40 @@ kbd {
 
 .comment-head .author {
   color: var(--text);
+}
+
+/* Per-comment "Delete" button. Quiet by default, brightens to the danger
+ * color on hover. Visible whenever the caller is the comment's author and
+ * the comment isn't already soft-deleted. */
+.comment-delete {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 120ms ease,
+    background-color 120ms ease,
+    color 120ms ease;
+  box-shadow: none;
+}
+
+.comment:hover .comment-delete,
+.comment-delete:focus-visible {
+  opacity: 1;
+}
+
+.comment-delete:hover:not(:disabled) {
+  background: rgba(248, 113, 113, 0.14);
+  color: var(--bad);
+}
+
+.comment-delete:disabled {
+  cursor: progress;
+  opacity: 0.7;
 }
 
 .comment-body {

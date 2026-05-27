@@ -24,6 +24,9 @@ export interface DiffCallbacks {
     content: string;
   }) => Promise<void>;
   onDeleteDraft: (id: string) => Promise<void>;
+  // Soft-delete a posted CodeCommit comment. The renderer is responsible for
+  // confirming the action with the user; the provider enforces author-only.
+  onDeleteComment: (commentId: string) => Promise<void>;
   onToggleReviewed: (file: FileDiffEntry, next: boolean) => void;
 }
 
@@ -33,6 +36,9 @@ export interface DiffContext {
   beforeCommitId: string;
   afterCommitId: string;
   postingThreadId: string | null;
+  // ARN of the currently authenticated user, when known. Used to decide
+  // whether to render the "Delete" affordance on each posted comment.
+  selfArn?: string;
 }
 
 export interface FileSectionApi {

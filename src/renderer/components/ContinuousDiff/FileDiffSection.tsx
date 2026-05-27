@@ -78,7 +78,9 @@ function FileDiffSectionImpl({
   const [collapsed, setCollapsed] = useState(false);
   const [autoCollapsed, setAutoCollapsed] = useState(false);
   const [extraHunks, setExtraHunks] = useState<DiffHunk[]>([]);
+  const [pinned, setPinned] = useState(false);
   const sectionRef = useRef<HTMLDivElement | null>(null);
+  const pinSentinelRef = useRef<HTMLDivElement | null>(null);
 
   // Deferring the diff lets React commit the big subtree at a lower priority,
   // so scroll/key input stays responsive while a large file is rendering.
@@ -141,6 +143,37 @@ function FileDiffSectionImpl({
       io.disconnect();
     };
   }, [entry.path, onVisibilityChange]);
+
+  // Pin sentinel: a 1px element placed just above the section. While the
+  // sentinel is visible, the header is resting at the top of its section.
+  // The moment the sentinel scrolls out (above the scroll container's top
+  // edge), the header is pinned. We use IntersectionObserver with the
+  // sentinel's parent's scroll container as the implicit root — that's
+  // .continuous-diff in this layout.
+  useEffect(() => {
+    const el = pinSentinelRef.current;
+    if (!el) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          // boundingClientRect.top < rootBounds.top means the sentinel is
+          // above the viewport — i.e. the section has scrolled up past the
+          // pin point. !isIntersecting alone would also fire when the section
+          // scrolls below the viewport (a different state we don't want
+          // marked as "pinned").
+          const above =
+            e.boundingClientRect.top < (e.rootBounds?.top ?? 0) &&
+            !e.isIntersecting;
+          setPinned(above);
+        }
+      },
+      { threshold: [0, 1] },
+    );
+    io.observe(el);
+    return () => {
+      io.disconnect();
+    };
+  }, []);
 
   // Fetch the file diff once we decide to load it. Runs through a renderer-
   // wide semaphore so that scrolling fast into a large PR doesn't fire dozens
@@ -213,7 +246,10 @@ function FileDiffSectionImpl({
       className={`file-section${reviewed ? ' is-reviewed' : ''}`}
       data-path={entry.path}
     >
-      <header className="file-section-head">
+      <div ref={pinSentinelRef} className="file-section-pin-sentinel" />
+      <header
+        className={`file-section-head${pinned ? ' is-pinned' : ''}`}
+      >
         <button
           className="file-collapse"
           onClick={() => {
@@ -277,6 +313,16 @@ function FileDiffSectionImpl({
             </div>
           ) : (
             <DiffGrid>
+              {allHunks.length > 0 && (
+                <LeadingExpand
+                  repositoryName={ctx.repositoryName}
+                  beforeBlobId={entry.beforeBlobId}
+                  afterBlobId={entry.afterBlobId}
+                  firstOldStart={allHunks[0]!.oldStart}
+                  firstNewStart={allHunks[0]!.newStart}
+                  onInsert={onInsertExpansion}
+                />
+              )}
               {allHunks.map((hunk, idx) => {
                 const prev = allHunks[idx - 1];
                 const next = allHunks[idx + 1];
@@ -321,16 +367,6 @@ function FileDiffSectionImpl({
                   </Fragment>
                 );
               })}
-              {allHunks.length > 0 && (
-                <LeadingExpand
-                  repositoryName={ctx.repositoryName}
-                  beforeBlobId={entry.beforeBlobId}
-                  afterBlobId={entry.afterBlobId}
-                  firstOldStart={allHunks[0]!.oldStart}
-                  firstNewStart={allHunks[0]!.newStart}
-                  onInsert={onInsertExpansion}
-                />
-              )}
             </DiffGrid>
           )}
         </div>

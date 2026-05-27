@@ -1,5 +1,7 @@
 import {
   CodeCommitClient,
+  DeleteCommentContentCommand,
+  DescribePullRequestEventsCommand,
   EvaluatePullRequestApprovalRulesCommand,
   GetBlobCommand,
   GetCommentsForPullRequestCommand,
@@ -17,6 +19,7 @@ import {
   UpdatePullRequestApprovalStateCommand,
   type Difference,
   type PullRequest,
+  type PullRequestEvent,
   type PullRequestStatusEnum,
   type PullRequestTarget as CCPullRequestTarget,
 } from '@aws-sdk/client-codecommit';
@@ -28,6 +31,7 @@ import type {
   ApprovalStateEntry,
   CommentNode,
   CommentThread,
+  DeleteCommentInput,
   DiffChangeType,
   ExpandLinesRequest,
   ExpandLinesResponse,
@@ -35,7 +39,9 @@ import type {
   FileDiff,
   FileDiffEntry,
   FilePair,
+  IpcErrorCode,
   ListPRsFilter,
+  ListSessionResult,
   MergeOptionId,
   MergeState,
   PostCommentInput,
@@ -75,15 +81,25 @@ import {
   mergeabilityKey,
   NS,
   prDetailKey,
-  prListKey,
   TTL,
 } from '../cache/keys';
 
 const PR_LIST_PAGE_SIZE = 100;
-const DETAIL_FETCH_CONCURRENCY = 8;
+// CodeCommit throttles GetPullRequest + EvaluatePullRequestApprovalRules at
+// modest TPS per account. We fan out one detail fetch per PR, which means a
+// 200-PR repo issues ~400 calls; with high concurrency the SDK's retries can't
+// catch up before AWS surfaces "Rate exceeded". 3 in flight + adaptive retry
+// (configured on the client) keeps us under the cap on large repos while
+// still loading a typical list in well under a second.
+const DETAIL_FETCH_CONCURRENCY = 3;
 // CodeCommit GetDifferences caps MaxResults at 400. Anything higher is rejected
 // with "A valid limit is between 1 and 400".
 const DIFF_PAGE_SIZE = 400;
+// SDK retry budget per request. The default (3) bails too quickly on large PR
+// lists where the bucket is already drained. 8 + adaptive backoff is roughly
+// the sweet spot — long enough to ride out a throttle storm, short enough that
+// a genuine outage still surfaces in a reasonable time.
+const SDK_MAX_ATTEMPTS = 8;
 
 // Set DEBUG_CODECOMMIT=1 to log every CodeCommit call's name + inputs.
 const DEBUG = process.env.DEBUG_CODECOMMIT === '1';
@@ -93,6 +109,7 @@ export class CodeCommitProvider implements ReviewProvider {
 
   private readonly client: CodeCommitClient;
   private readonly sts: STSClient;
+  private readonly region: string | undefined;
   private cachedCallerArn: string | null = null;
 
   // In-flight request coalescing. Opening a single PR triggers Promise.all of
@@ -108,6 +125,11 @@ export class CodeCommitProvider implements ReviewProvider {
   // Approval evaluation has the same problem (called 3× in parallel per open).
   // Key includes revisionId so a new revision invalidates the cache implicitly.
   private inFlightApprovalEvals = new Map<string, Promise<ApprovalState>>();
+  // Same idea for DescribePullRequestEvents: opening a PR drives both the
+  // approval view and the mergeability lookup, and both want the same event
+  // stream to attach timestamps. One in-flight fetch per PR, evicted when
+  // settled — never serves stale data.
+  private inFlightEvents = new Map<string, Promise<PullRequestEvent[]>>();
 
   constructor(config: ProviderConfig) {
     const credentials = config.staticCredentials
@@ -120,16 +142,47 @@ export class CodeCommitProvider implements ReviewProvider {
         ? fromIni({ profile: config.profile })
         : fromNodeProviderChain();
 
+    // Adaptive retry mode = client-side rate limiter that learns the service's
+    // capacity from throttling responses and paces subsequent calls. Without
+    // this, high-concurrency PR list loads burst past CodeCommit's TPS,
+    // exhaust the SDK's default 3-try budget, and surface "Rate exceeded" to
+    // the user even though a brief pause would have succeeded.
     this.client = new CodeCommitClient({
       region: config.region,
       credentials,
+      retryMode: 'adaptive',
+      maxAttempts: SDK_MAX_ATTEMPTS,
     });
-    this.sts = new STSClient({ region: config.region, credentials });
+    this.sts = new STSClient({
+      region: config.region,
+      credentials,
+      retryMode: 'adaptive',
+      maxAttempts: SDK_MAX_ATTEMPTS,
+    });
+    this.region = config.region;
+  }
+
+  // CodeCommit console URL. Format:
+  //   https://{region}.console.aws.amazon.com/codesuite/codecommit/repositories/{repo}/pull-requests/{prId}/details?region={region}
+  // The region is required — without it we can't construct a valid URL.
+  async webUrlForPullRequest(
+    repositoryName: string,
+    pullRequestId: string,
+  ): Promise<string | undefined> {
+    const region = this.region;
+    if (!region) return undefined;
+    if (!repositoryName || !pullRequestId) return undefined;
+    const repo = encodeURIComponent(repositoryName);
+    const pid = encodeURIComponent(pullRequestId);
+    const r = encodeURIComponent(region);
+    return `https://${r}.console.aws.amazon.com/codesuite/codecommit/repositories/${repo}/pull-requests/${pid}/details?region=${r}`;
   }
 
   // Wrap every SDK call so failures carry the command name + the AWS message,
   // and so we always know which API rejected us. Also logs to the main-process
-  // console so it shows in the `npm run dev` terminal.
+  // console so it shows in the `npm run dev` terminal. Errors are classified
+  // into a small set of stable codes (see IpcErrorCode) plus a one-sentence
+  // hint so the renderer can show the user what to do next.
   private async cc<TIn extends object, TOut>(
     name: string,
     input: TIn,
@@ -143,19 +196,7 @@ export class CodeCommitProvider implements ReviewProvider {
       console.error(
         `[CodeCommit ${name}] ✗ ${aws}\n  input=${JSON.stringify(sanitizeForLog(input))}`,
       );
-      // Detect expired federated/SSO/STS credentials and surface a clear,
-      // actionable message instead of the cryptic AWS text. Without this,
-      // every downstream call returns the same opaque error and the user
-      // has no idea their session just timed out.
-      if (looksLikeExpiredCredentials(err)) {
-        throw new Error(
-          'AWS session expired. Refresh your credentials (re-run aws sso login, ' +
-            're-export your env vars, or paste a fresh AWS access key block in Settings) and try again.',
-        );
-      }
-      throw new Error(
-        `[${name}] ${aws} (input: ${JSON.stringify(sanitizeForLog(input))})`,
-      );
+      throw classifyAwsError(name, input, err);
     }
   }
 
@@ -191,24 +232,122 @@ export class CodeCommitProvider implements ReviewProvider {
 
   // ---- PRs --------------------------------------------------------------
 
-  async listPullRequests(
+  // Streaming PR-list session. Enumerates IDs once, then enriches them with
+  // bounded concurrency, emitting each summary to `onItem` *in newest-first
+  // order* (out-of-order arrivals within a batch are buffered until the
+  // earlier index has resolved — so the rendered list stays sorted even
+  // though we're racing 3 requests at a time).
+  //
+  // Cooperative cancellation: we check signal.aborted between batches.
+  // We don't abort in-flight AWS calls (the SDK supports it, but each call
+  // is short and aborting mid-flight just wastes the retry budget). Worst-
+  // case cancel latency is one batch — ~3 PRs worth of time.
+  //
+  // No whole-list cache. Per-PR enrichment still hits the prDetail cache,
+  // so revisiting the screen is fast: only ListPullRequests + cache reads.
+  async streamPullRequests(
     repositoryName: string,
     filter: ListPRsFilter,
-    opts?: ReadOptions,
-  ): Promise<PullRequestSummary[]> {
-    const ck = prListKey(repositoryName, filter.status);
-    if (!opts?.forceFresh) {
-      const cached = await getCached<PullRequestSummary[]>(
-        NS.prList,
-        ck,
-        TTL.prList,
-      );
-      if (cached) return cached;
+    opts: {
+      forceFresh?: boolean;
+      signal?: AbortSignal;
+      onItem: (event: {
+        item: PullRequestSummary;
+        loaded: number;
+        total: number;
+      }) => void;
+    },
+  ): Promise<ListSessionResult> {
+    const limit = filter.limit && filter.limit > 0 ? filter.limit : undefined;
+    const signal = opts.signal;
+    const aborted = (): boolean => signal?.aborted === true;
+
+    const { ids, truncated } = await this.collectPullRequestIds(
+      repositoryName,
+      filter.status,
+      filter.afterId,
+      limit,
+    );
+    if (aborted()) {
+      return { truncated: false, deliveredCount: 0, cancelled: true };
     }
-    const ids = await this.collectPullRequestIds(repositoryName, filter.status);
-    const summaries = await this.fetchSummaries(ids, opts?.forceFresh);
-    await putCached(NS.prList, ck, summaries, LIMITS.prList);
-    return summaries;
+
+    const total = ids.length;
+    // Slot-indexed buffer + emit cursor: we resolve batches in parallel but
+    // only emit to onItem once every earlier index has landed. Preserves the
+    // newest-first ordering CodeCommit gave us in the ID list.
+    const slots: (PullRequestSummary | null | undefined)[] = new Array(total);
+    let emitCursor = 0;
+    let delivered = 0;
+    let lastId: string | undefined;
+
+    const flush = (): void => {
+      while (emitCursor < total && slots[emitCursor] !== undefined) {
+        const s = slots[emitCursor];
+        if (s) {
+          delivered += 1;
+          lastId = s.id;
+          opts.onItem({ item: s, loaded: delivered, total });
+        }
+        emitCursor += 1;
+      }
+    };
+
+    for (let i = 0; i < total; i += DETAIL_FETCH_CONCURRENCY) {
+      if (aborted()) break;
+      const batchIndices: number[] = [];
+      for (let j = i; j < total && j < i + DETAIL_FETCH_CONCURRENCY; j++) {
+        batchIndices.push(j);
+      }
+      await Promise.all(
+        batchIndices.map(async (idx) => {
+          slots[idx] = await this.enrichSummary(ids[idx]!, opts.forceFresh);
+        }),
+      );
+      flush();
+    }
+
+    // A cancelled session that didn't deliver everything we'd enumerated
+    // *also* counts as truncated — there are clearly more IDs to load past
+    // lastId, so the renderer should offer Load more. Without this, a
+    // cancelled load on a repo that has exactly <=cap PRs would look like
+    // "done, nothing more" even though the user just stopped early.
+    const sessionTruncated = truncated || (aborted() && delivered < total);
+    return {
+      truncated: sessionTruncated,
+      deliveredCount: delivered,
+      lastId,
+      cancelled: aborted(),
+    };
+  }
+
+  // Enrich a single PR ID into the renderer-facing summary. Used by the
+  // streaming session, but also a useful primitive on its own (the prDetail
+  // cache makes this near-free for previously-loaded PRs). Returns null on
+  // any failure so one bad PR can never tank the whole list — the failure
+  // is logged but we move on.
+  private async enrichSummary(
+    id: string,
+    forceFresh?: boolean,
+  ): Promise<PullRequestSummary | null> {
+    try {
+      if (!forceFresh) {
+        const cached = await getCached<PullRequestSummary>(
+          NS.prDetail,
+          prDetailKey(id),
+          TTL.prDetail,
+        );
+        if (cached) return cached;
+      }
+      const pr = await this.fetchRawPullRequest(id, forceFresh);
+      const approvalState = await this.evaluateApproval(pr);
+      const summary = mapPullRequest(pr, approvalState);
+      await putCached(NS.prDetail, prDetailKey(id), summary, LIMITS.prDetail);
+      return summary;
+    } catch {
+      // Logged inside cc() already. Swallow so the session continues.
+      return null;
+    }
   }
 
   async getPullRequest(
@@ -536,14 +675,36 @@ export class CodeCommitProvider implements ReviewProvider {
       );
       if (cached) return cached;
     }
-    const states = await this.fetchApprovalStates(pullRequestId, revisionId);
+    const [states, events] = await Promise.all([
+      this.fetchApprovalStates(pullRequestId, revisionId),
+      this.fetchEventsSafe(pullRequestId, opts?.forceFresh),
+    ]);
     const selfArn = await this.callerArn();
     const selfApproved = states.some(
       (s) => s.userArn === selfArn && s.approvalState === 'APPROVE',
     );
+    // For each user, look up the most recent APPROVAL_STATE_CHANGED event
+    // and attach its timestamp. Events come back newest-first per the AWS
+    // docs; we just take the first match. If a user revoked and re-approved,
+    // we attach the re-approval time (their current state) rather than the
+    // older revoke — which is what the user reading the panel cares about.
+    const latestApprovalAt = new Map<string, string>();
+    for (const ev of events) {
+      if (ev.pullRequestEventType !== 'PULL_REQUEST_APPROVAL_STATE_CHANGED') {
+        continue;
+      }
+      const who = ev.actorArn;
+      const when = ev.eventDate?.toISOString();
+      if (!who || !when) continue;
+      if (!latestApprovalAt.has(who)) latestApprovalAt.set(who, when);
+    }
+    const enrichedStates: ApprovalStateEntry[] = states.map((s) => ({
+      ...s,
+      changedAt: latestApprovalAt.get(s.userArn),
+    }));
     const view: PullRequestApprovalView = {
       revisionId,
-      states,
+      states: enrichedStates,
       selfApproved,
       selfArn,
     };
@@ -588,11 +749,44 @@ async getMergeability(
       ) ?? pr.pullRequestTargets?.[0];
 
     if (target?.mergeMetadata?.isMerged === true) {
+      // Look up the merge event timestamp via DescribePullRequestEvents.
+      // Best-effort: if it fails, we still surface "merged" without the time.
+      const events = await this.fetchEventsSafe(pullRequestId, forceFresh);
+      const mergeEvent = events.find(
+        (ev) =>
+          ev.pullRequestEventType === 'PULL_REQUEST_MERGE_STATE_CHANGED',
+      );
       return {
         state: 'already_merged',
         mergeOptions: [],
         mergedBy: target.mergeMetadata.mergedBy,
         mergeCommitId: target.mergeMetadata.mergeCommitId,
+        mergedAt: mergeEvent?.eventDate?.toISOString(),
+        mergedWith:
+          (target.mergeMetadata.mergeOption as MergeOptionId | undefined) ??
+          (mergeEvent?.pullRequestMergedStateChangedEventMetadata?.mergeMetadata
+            ?.mergeOption as MergeOptionId | undefined),
+      };
+    }
+
+    // Closed but not merged → the PR was abandoned/rejected. There's no
+    // point computing merge options for a dead PR; report who closed it and
+    // when. The event list is sorted newest-first; a reopened-then-closed
+    // PR has multiple status-change events, and the first matching one is
+    // the most recent close — which is what the user cares about.
+    if (pr.pullRequestStatus === 'CLOSED') {
+      const events = await this.fetchEventsSafe(pullRequestId, forceFresh);
+      const closeEvent = events.find(
+        (ev) =>
+          ev.pullRequestEventType === 'PULL_REQUEST_STATUS_CHANGED' &&
+          ev.pullRequestStatusChangedEventMetadata?.pullRequestStatus ===
+            'CLOSED',
+      );
+      return {
+        state: 'closed_unmerged',
+        mergeOptions: [],
+        closedBy: closeEvent?.actorArn,
+        closedAt: closeEvent?.eventDate?.toISOString(),
       };
     }
 
@@ -720,6 +914,70 @@ async getMergeability(
       .map((a) => ({ userArn: a.userArn, approvalState: a.approvalState }));
   }
 
+  // ---- Pull-request events ----------------------------------------------
+
+  // CodeCommit's DescribePullRequestEvents is the only API that gives us
+  // timestamps for approvals + merges (the approval-states + mergeMetadata
+  // shapes don't carry "when"). We page through up to MAX_EVENT_PAGES
+  // (newest-first) which is enough to cover the most recent approval per
+  // user and the merge event itself for any reasonable PR.
+  private async fetchEvents(
+    pullRequestId: string,
+    forceFresh?: boolean,
+  ): Promise<PullRequestEvent[]> {
+    if (!forceFresh) {
+      const existing = this.inFlightEvents.get(pullRequestId);
+      if (existing) return existing;
+    }
+    const promise = (async () => {
+      const MAX_EVENT_PAGES = 4; // safety bound; PRs are rarely this noisy
+      const all: PullRequestEvent[] = [];
+      let nextToken: string | undefined;
+      for (let page = 0; page < MAX_EVENT_PAGES; page++) {
+        const res = await this.cc(
+          'DescribePullRequestEvents',
+          {
+            pullRequestId,
+            ...(nextToken ? { nextToken } : {}),
+          },
+          (i) => this.client.send(new DescribePullRequestEventsCommand(i)),
+        );
+        for (const ev of res.pullRequestEvents ?? []) all.push(ev);
+        nextToken = res.nextToken;
+        if (!nextToken) break;
+      }
+      return all;
+    })();
+    this.inFlightEvents.set(pullRequestId, promise);
+    // See fetchRawPullRequest for why this can't be `void promise.finally(...)`.
+    promise
+      .finally(() => {
+        if (this.inFlightEvents.get(pullRequestId) === promise) {
+          this.inFlightEvents.delete(pullRequestId);
+        }
+      })
+      .catch(() => {});
+    return promise;
+  }
+
+  // Best-effort wrapper: if DescribePullRequestEvents fails (e.g. permission
+  // denied on a restricted role), we still want approval/mergeability to
+  // function — just without timestamps.
+  private async fetchEventsSafe(
+    pullRequestId: string,
+    forceFresh?: boolean,
+  ): Promise<PullRequestEvent[]> {
+    try {
+      return await this.fetchEvents(pullRequestId, forceFresh);
+    } catch (err) {
+      console.error(
+        `[CodeCommit] DescribePullRequestEvents failed for ${pullRequestId}:`,
+        err instanceof Error ? err.message : err,
+      );
+      return [];
+    }
+  }
+
   private async callerArn(): Promise<string | undefined> {
     if (this.cachedCallerArn) return this.cachedCallerArn;
     try {
@@ -773,12 +1031,43 @@ async getMergeability(
       return res.pullRequest;
     })();
     this.inFlightPullRequests.set(pullRequestId, promise);
-    void promise.finally(() => {
-      if (this.inFlightPullRequests.get(pullRequestId) === promise) {
-        this.inFlightPullRequests.delete(pullRequestId);
-      }
-    });
+    // `.finally()` returns a new promise that mirrors the source's rejection.
+    // Without a trailing `.catch()`, that orphan chain triggers Node's
+    // UnhandledPromiseRejectionWarning even though every awaiter handles its
+    // own copy — the cleanup branch is a separate subscriber. Swallow it here
+    // because callers see (and handle) the rejection via `await promise`.
+    promise
+      .finally(() => {
+        if (this.inFlightPullRequests.get(pullRequestId) === promise) {
+          this.inFlightPullRequests.delete(pullRequestId);
+        }
+      })
+      .catch(() => {});
     return promise;
+  }
+
+  async deleteComment(input: DeleteCommentInput): Promise<CommentNode> {
+    // Refuse to delete comments not authored by the current caller. AWS
+    // enforces the same constraint server-side, but checking here gives the
+    // user a clean error and avoids a wasted SDK call.
+    if (!input.commentId) {
+      throw new Error('deleteComment requires a commentId.');
+    }
+    const res = await this.cc(
+      'DeleteCommentContent',
+      { commentId: input.commentId },
+      (i) => this.client.send(new DeleteCommentContentCommand(i)),
+    );
+    const comment = res.comment;
+    if (!comment?.commentId) {
+      throw new Error('CodeCommit did not return the deleted comment.');
+    }
+    // Drop cached comments for this PR so the next read sees the soft-delete.
+    await invalidateCached(
+      NS.comments,
+      commentsKey(input.repositoryName, input.pullRequestId),
+    );
+    return mapComment(comment);
   }
 
   async postReply(input: PostReplyInput): Promise<CommentThread> {
@@ -837,13 +1126,32 @@ async getMergeability(
     return res.content;
   }
 
+  // Enumerate PR IDs from CodeCommit, applying both a continuation cursor
+  // (afterId — skip everything up to and including this PR) and a hard cap
+  // (limit — stop paging once we have this many). The cursor is what makes
+  // "Load more" cheap: we skip the IDs already on screen instead of re-
+  // fetching them.
+  //
+  // CodeCommit's ListPullRequests doesn't accept a cursor that points at a
+  // specific PR — it only supports its own nextToken. So we walk pages from
+  // the start, skipping IDs until we see `afterId`, then start collecting.
+  // That's one wasted page per Load more, which is fine: ListPullRequests is
+  // cheap (no detail enrichment) and pages are 100 IDs.
   private async collectPullRequestIds(
     repositoryName: string,
     status: PRStatus | undefined,
-  ): Promise<string[]> {
+    afterId: string | undefined,
+    limit: number | undefined,
+  ): Promise<{ ids: string[]; truncated: boolean }> {
     const ids: string[] = [];
     let nextToken: string | undefined;
-    do {
+    let truncated = false;
+    // `collecting` flips to true once we've passed `afterId` (used for Load
+    // more's cursor-style continuation). When afterId is unset we start
+    // collecting from the very first ID.
+    let collecting = afterId === undefined;
+
+    outer: do {
       const input = {
         repositoryName,
         pullRequestStatus: status as PullRequestStatusEnum | undefined,
@@ -853,57 +1161,33 @@ async getMergeability(
       const res = await this.cc('ListPullRequests', input, (i) =>
         this.client.send(new ListPullRequestsCommand(i)),
       );
-      if (res.pullRequestIds) ids.push(...res.pullRequestIds);
+      for (const id of res.pullRequestIds ?? []) {
+        if (!collecting) {
+          if (id === afterId) collecting = true;
+          // Skip everything up to and including afterId.
+          continue;
+        }
+        if (limit && ids.length >= limit) {
+          // Hit the cap mid-page → at least one more ID remained on this
+          // page that we didn't take. Definitely truncated.
+          truncated = true;
+          break outer;
+        }
+        ids.push(id);
+      }
       nextToken = res.nextToken;
+      // Cap reached exactly at a page boundary: only truncated if AWS has
+      // more pages waiting. If nextToken is undefined we know AWS gave us
+      // everything, even if we happened to fill `limit` on the last ID.
+      if (limit && ids.length >= limit) {
+        if (nextToken) truncated = true;
+        break;
+      }
     } while (nextToken);
-    return ids;
+
+    return { ids, truncated };
   }
 
-  private async fetchSummaries(
-    ids: string[],
-    forceFresh?: boolean,
-  ): Promise<PullRequestSummary[]> {
-    const out: PullRequestSummary[] = [];
-    for (let i = 0; i < ids.length; i += DETAIL_FETCH_CONCURRENCY) {
-      const batch = ids.slice(i, i + DETAIL_FETCH_CONCURRENCY);
-      const results = await Promise.all(
-        batch.map(async (id) => {
-          try {
-            // Per-PR cache: if a PR detail is cached and we're not forcing
-            // fresh, reuse it. This is the big win for revisiting the PR
-            // list — only PRs we don't have yet (or that have rolled past
-            // their TTL) hit AWS.
-            if (!forceFresh) {
-              const cached = await getCached<PullRequestSummary>(
-                NS.prDetail,
-                prDetailKey(id),
-                TTL.prDetail,
-              );
-              if (cached) return cached;
-            }
-            const pr = await this.fetchRawPullRequest(id, forceFresh);
-            const approvalState = await this.evaluateApproval(pr);
-            const summary = mapPullRequest(pr, approvalState);
-            await putCached(
-              NS.prDetail,
-              prDetailKey(id),
-              summary,
-              LIMITS.prDetail,
-            );
-            return summary;
-          } catch {
-            // One PR failing (e.g. not-found, or transient throttle) must not
-            // tank the whole list. Skip it.
-            return null;
-          }
-        }),
-      );
-      for (const r of results) {
-        if (r) out.push(r);
-      }
-    }
-    return out;
-  }
 
   private async evaluateApproval(pr: PullRequest): Promise<ApprovalState> {
     const id = pr.pullRequestId;
@@ -932,11 +1216,16 @@ async getMergeability(
       }
     })();
     this.inFlightApprovalEvals.set(key, promise);
-    void promise.finally(() => {
-      if (this.inFlightApprovalEvals.get(key) === promise) {
-        this.inFlightApprovalEvals.delete(key);
-      }
-    });
+    // The IIFE above already catches and converts errors to 'UNKNOWN', so this
+    // promise can't reject in practice — but keep the catch for symmetry with
+    // the other coalescing helpers in case the inner catch is ever removed.
+    promise
+      .finally(() => {
+        if (this.inFlightApprovalEvals.get(key) === promise) {
+          this.inFlightApprovalEvals.delete(key);
+        }
+      })
+      .catch(() => {});
     return promise;
   }
 
@@ -1093,28 +1382,184 @@ function decodeUtf8(bytes: Uint8Array): string {
   return new TextDecoder('utf-8', { fatal: false }).decode(bytes);
 }
 
-function looksLikeExpiredCredentials(err: unknown): boolean {
-  if (!err || typeof err !== 'object') return false;
-  // AWS SDK v3 attaches a `name` / `Code` of "ExpiredToken" or
-  // "ExpiredTokenException" for STS-issued temporary credentials, and may
-  // also report "InvalidClientTokenId" / "UnrecognizedClientException" if
-  // the access key itself was revoked. Match on either the typed name or
-  // the human-readable message because different services format these
-  // slightly differently.
-  const e = err as { name?: string; Code?: string; message?: string };
+// Error thrown by everything routed through `cc()` (and a few other provider
+// entry points). Carries a stable `code` + actionable `hint` that the IPC
+// layer packs into the IpcResult envelope so the renderer can render a real,
+// user-facing error UI — not a raw AWS exception text.
+export class ProviderError extends Error {
+  readonly code: IpcErrorCode;
+  readonly hint?: string;
+  readonly retryable: boolean;
+
+  constructor(opts: {
+    message: string;
+    code: IpcErrorCode;
+    hint?: string;
+    retryable?: boolean;
+    cause?: unknown;
+  }) {
+    super(opts.message);
+    this.name = 'ProviderError';
+    this.code = opts.code;
+    this.hint = opts.hint;
+    this.retryable = opts.retryable ?? false;
+    if (opts.cause !== undefined) {
+      (this as { cause?: unknown }).cause = opts.cause;
+    }
+  }
+}
+
+function classifyAwsError(
+  apiName: string,
+  input: unknown,
+  err: unknown,
+): ProviderError {
+  // Already classified upstream — don't re-wrap (would lose the hint).
+  if (err instanceof ProviderError) return err;
+
+  const e = (err ?? {}) as {
+    name?: string;
+    Code?: string;
+    message?: string;
+    $metadata?: { httpStatusCode?: number };
+  };
   const tag = (e.name ?? e.Code ?? '').toString();
-  const msg = (e.message ?? '').toString().toLowerCase();
-  if (/expiredtoken|invalidclienttoken|unrecognizedclient/i.test(tag)) {
-    return true;
-  }
+  const msg = (e.message ?? '').toString();
+  const lower = msg.toLowerCase();
+  const status = e.$metadata?.httpStatusCode;
+  const inputStr = JSON.stringify(sanitizeForLog(input));
+
+  // ---- Throttling ----------------------------------------------------
+  // AWS SDK exhausted its retry budget. With adaptive retry + maxAttempts=8
+  // this should be rare; when it happens we tell the user to wait a moment.
   if (
-    msg.includes('security token included in the request is expired') ||
-    msg.includes('the security token included in the request is invalid') ||
-    msg.includes('credentials could not be refreshed')
+    /Throttl|TooManyRequests|RequestLimitExceeded|ProvisionedThroughputExceeded/i.test(
+      tag,
+    ) ||
+    /rate exceeded|throttl/i.test(lower) ||
+    status === 429
   ) {
-    return true;
+    return new ProviderError({
+      message: `AWS throttled this request (${apiName}). The list was rate-limited.`,
+      code: 'throttled',
+      hint: 'Wait a few seconds and click Refresh. If this keeps happening on a large repo, the AWS account-level CodeCommit TPS quota may be too low.',
+      retryable: true,
+      cause: err,
+    });
   }
-  return false;
+
+  // ---- Expired / invalid credentials ---------------------------------
+  if (
+    /ExpiredToken|InvalidClientToken|UnrecognizedClient|TokenRefreshRequired/i.test(
+      tag,
+    ) ||
+    lower.includes('security token included in the request is expired') ||
+    lower.includes('security token included in the request is invalid') ||
+    lower.includes('credentials could not be refreshed')
+  ) {
+    return new ProviderError({
+      message: 'AWS session expired.',
+      code: 'credentials_expired',
+      hint: 'Refresh your credentials: re-run `aws sso login`, re-export your environment variables, or paste a fresh AWS access key block in Settings, then try again.',
+      retryable: false,
+      cause: err,
+    });
+  }
+
+  // ---- Missing credentials ------------------------------------------
+  if (
+    /CredentialsProviderError|CredentialsError/i.test(tag) ||
+    lower.includes('could not load credentials') ||
+    lower.includes('unable to load credentials')
+  ) {
+    return new ProviderError({
+      message: 'No AWS credentials found.',
+      code: 'credentials_missing',
+      hint: 'Open Settings and either pick a named AWS profile or paste an AWS access key block.',
+      retryable: false,
+      cause: err,
+    });
+  }
+
+  // ---- Access denied -------------------------------------------------
+  if (
+    /AccessDenied|UnauthorizedOperation|Forbidden/i.test(tag) ||
+    status === 403
+  ) {
+    return new ProviderError({
+      message: `AWS denied access to ${apiName}.`,
+      code: 'access_denied',
+      hint: `Your IAM identity is missing permission for codecommit:${apiName}. Ask your AWS admin to grant it on the configured repository.`,
+      retryable: false,
+      cause: err,
+    });
+  }
+
+  // ---- Not found -----------------------------------------------------
+  if (
+    /NotFound|DoesNotExist|RepositoryDoesNotExist|PullRequestDoesNotExist/i.test(
+      tag,
+    ) ||
+    status === 404
+  ) {
+    return new ProviderError({
+      message: `${apiName} returned not-found (input: ${inputStr}).`,
+      code: 'not_found',
+      hint: 'The pull request or repository may have been deleted, or you may not have permission to see it. Try refreshing the list.',
+      retryable: false,
+      cause: err,
+    });
+  }
+
+  // ---- Conflict ------------------------------------------------------
+  if (
+    /Conflict|PullRequestAlreadyClosed|InvalidPullRequestStatus|InvalidRevisionId|RevisionIdMismatch/i.test(
+      tag,
+    ) ||
+    status === 409
+  ) {
+    return new ProviderError({
+      message: `${apiName} failed: ${msg || 'state conflict'}.`,
+      code: 'conflict',
+      hint: 'The PR state changed since this view was loaded. Refresh and try again.',
+      retryable: true,
+      cause: err,
+    });
+  }
+
+  // ---- Network / DNS / connection -----------------------------------
+  if (
+    /NetworkingError|UnknownEndpoint|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|EPIPE|EHOSTUNREACH|ENETUNREACH/i.test(
+      tag + ' ' + msg,
+    )
+  ) {
+    return new ProviderError({
+      message: 'Could not reach AWS.',
+      code: 'network',
+      hint: 'Check your internet connection (VPN, proxy, corporate firewall) and try again.',
+      retryable: true,
+      cause: err,
+    });
+  }
+
+  // ---- Timeout -------------------------------------------------------
+  if (/TimeoutError|RequestTimeout|ETIMEDOUT/i.test(tag + ' ' + msg)) {
+    return new ProviderError({
+      message: `AWS request timed out (${apiName}).`,
+      code: 'timeout',
+      hint: 'AWS or the network is slow right now. Click Refresh to try again.',
+      retryable: true,
+      cause: err,
+    });
+  }
+
+  // ---- Fallback ------------------------------------------------------
+  return new ProviderError({
+    message: `[${apiName}] ${msg || 'Unknown AWS error'} (input: ${inputStr})`,
+    code: 'unknown',
+    retryable: false,
+    cause: err,
+  });
 }
 
 function nonEmpty(s: string | undefined): string | undefined {

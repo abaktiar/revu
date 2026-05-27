@@ -284,6 +284,8 @@ function ThreadRow({
           thread={thread}
           posting={posting}
           onReply={(content) => callbacks.onPostReply(thread.threadId, content)}
+          selfArn={ctx.selfArn}
+          onDeleteComment={callbacks.onDeleteComment}
         />
       </div>
     </div>

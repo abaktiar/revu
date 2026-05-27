@@ -6,7 +6,7 @@ import {
   type CredentialSource,
   type RepositorySummary,
 } from '@shared/types';
-import { api, unwrap } from '../api';
+import { api, IpcError, unwrap } from '../api';
 import { maskKey, parseEnvBlock } from '../parseEnvBlock';
 
 interface Props {
@@ -23,7 +23,7 @@ export function Settings({
   const [profiles, setProfiles] = useState<AwsProfileInfo[]>([]);
   const [repos, setRepos] = useState<RepositorySummary[]>([]);
   const [reposLoading, setReposLoading] = useState(false);
-  const [reposError, setReposError] = useState<string | null>(null);
+  const [reposError, setReposError] = useState<{ message: string; hint?: string } | null>(null);
   const [profilesError, setProfilesError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -45,7 +45,10 @@ export function Settings({
     try {
       setRepos(await unwrap(api.repos.list()));
     } catch (err) {
-      setReposError(err instanceof Error ? err.message : String(err));
+      const message = err instanceof Error ? err.message : String(err);
+      const hint =
+        err instanceof IpcError ? err.hint : undefined;
+      setReposError({ message, hint });
       setRepos([]);
     } finally {
       setReposLoading(false);
@@ -199,7 +202,14 @@ export function Settings({
         <button onClick={() => void refreshRepos()} disabled={reposLoading}>
           {reposLoading ? 'Loading…' : 'Refresh repos'}
         </button>
-        {reposError && <span className="hint warn">{reposError}</span>}
+        {reposError && (
+          <div className="hint warn settings-inline-error">
+            <div>{reposError.message}</div>
+            {reposError.hint && (
+              <div className="settings-inline-error-hint">{reposError.hint}</div>
+            )}
+          </div>
+        )}
       </section>
     </div>
   );

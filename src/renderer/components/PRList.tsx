@@ -1,15 +1,23 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
-import type { PullRequestSummary } from '@shared/types';
+import type { PullRequestSummary, PullRequestTarget } from '@shared/types';
+import { api, unwrap } from '../api';
 
-type SortKey = 'id' | 'title' | 'author' | 'lastActivityAt' | 'createdAt';
+type SortKey =
+  | 'id'
+  | 'title'
+  | 'author'
+  | 'lastActivityAt'
+  | 'createdAt'
+  | 'target';
 type SortDir = 'asc' | 'desc';
 
 interface Props {
   prs: PullRequestSummary[];
+  repositoryName?: string;
   onOpen?: (pr: PullRequestSummary) => void;
 }
 
-export function PRList({ prs, onOpen }: Props): JSX.Element {
+export function PRList({ prs, repositoryName, onOpen }: Props): JSX.Element {
   const [sortKey, setSortKey] = useState<SortKey>('lastActivityAt');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   const tbodyRef = useRef<HTMLTableSectionElement | null>(null);
@@ -74,6 +82,21 @@ export function PRList({ prs, onOpen }: Props): JSX.Element {
     [onOpen, focusRow],
   );
 
+  // Lazy lookup + open. We don't pre-resolve every row's URL because the
+  // provider call is over IPC; doing it on demand keeps the list mount cheap.
+  const openExternal = useCallback(
+    async (pr: PullRequestSummary): Promise<void> => {
+      if (!repositoryName) return;
+      try {
+        const url = await unwrap(api.prs.webUrl(repositoryName, pr.id));
+        if (url) window.open(url, '_blank', 'noopener,noreferrer');
+      } catch {
+        // Best-effort; the row still opens the in-app detail view.
+      }
+    },
+    [repositoryName],
+  );
+
   if (prs.length === 0) {
     return <div className="empty">No pull requests match the current filters.</div>;
   }
@@ -85,43 +108,100 @@ export function PRList({ prs, onOpen }: Props): JSX.Element {
           <Th label="ID" k="id" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
           <Th label="Title" k="title" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
           <Th label="Author" k="author" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+          <Th
+            label="Target"
+            k="target"
+            sortKey={sortKey}
+            sortDir={sortDir}
+            onClick={toggleSort}
+          />
           <th>Status</th>
           <th>Approval</th>
           <Th label="Updated" k="lastActivityAt" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+          {repositoryName && <th aria-label="External link"></th>}
         </tr>
       </thead>
       <tbody ref={tbodyRef}>
-        {sorted.map((pr) => (
-          <tr
-            key={pr.id}
-            className="clickable"
-            tabIndex={0}
-            role="button"
-            aria-label={`Pull request ${pr.id}: ${pr.title}`}
-            onClick={() => onOpen?.(pr)}
-            onKeyDown={(e) => onRowKeyDown(e, pr)}
-          >
-            <td className="id">#{pr.id}</td>
-            <td>{pr.title}</td>
-            <td className="id">{shortArn(pr.authorArn)}</td>
-            <td>
-              {pr.status === 'CLOSED' && pr.mergeState === 'MERGED' ? (
-                <span className="badge MERGED">MERGED</span>
-              ) : (
-                <span className={`badge ${pr.status}`}>{pr.status}</span>
+        {sorted.map((pr) => {
+          const target = pr.targets[0];
+          return (
+            <tr
+              key={pr.id}
+              className="clickable"
+              tabIndex={0}
+              role="button"
+              aria-label={`Pull request ${pr.id}: ${pr.title}`}
+              onClick={() => onOpen?.(pr)}
+              onKeyDown={(e) => onRowKeyDown(e, pr)}
+            >
+              <td className="id">#{pr.id}</td>
+              <td>{pr.title}</td>
+              <td className="id">{shortArn(pr.authorArn)}</td>
+              <td className="target-cell">
+                <BranchPair target={target} />
+              </td>
+              <td>
+                {pr.status === 'CLOSED' && pr.mergeState === 'MERGED' ? (
+                  <span className="badge MERGED">MERGED</span>
+                ) : (
+                  <span className={`badge ${pr.status}`}>{pr.status}</span>
+                )}
+              </td>
+              <td>
+                <span className={`badge ${pr.approvalState}`}>
+                  {pr.approvalState.replace('_', ' ')}
+                </span>
+              </td>
+              <td className="id">{fmtDate(pr.lastActivityAt)}</td>
+              {repositoryName && (
+                <td className="row-actions">
+                  <button
+                    type="button"
+                    className="row-external"
+                    title="Open in AWS CodeCommit console"
+                    aria-label={`Open PR ${pr.id} in AWS CodeCommit console`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void openExternal(pr);
+                    }}
+                    onKeyDown={(e) => e.stopPropagation()}
+                  >
+                    ↗
+                  </button>
+                </td>
               )}
-            </td>
-            <td>
-              <span className={`badge ${pr.approvalState}`}>
-                {pr.approvalState.replace('_', ' ')}
-              </span>
-            </td>
-            <td className="id">{fmtDate(pr.lastActivityAt)}</td>
-          </tr>
-        ))}
+            </tr>
+          );
+        })}
       </tbody>
     </table>
   );
+}
+
+function BranchPair({
+  target,
+}: {
+  target: PullRequestTarget | undefined;
+}): JSX.Element {
+  if (!target) return <span className="hint">—</span>;
+  const source = stripRefs(target.sourceReference);
+  const dest = stripRefs(target.destinationReference);
+  return (
+    <span className="branch-pair">
+      <code className="branch source" title={target.sourceReference || source}>
+        {source || '?'}
+      </code>
+      <span className="branch-arrow">→</span>
+      <code className="branch dest" title={target.destinationReference || dest}>
+        {dest || '?'}
+      </code>
+    </span>
+  );
+}
+
+function stripRefs(ref: string | undefined): string {
+  if (!ref) return '';
+  return ref.replace(/^refs\/heads\//, '').replace(/^refs\/tags\//, '');
 }
 
 function Th(props: {
@@ -165,7 +245,23 @@ function cmp(a: PullRequestSummary, b: PullRequestSummary, key: SortKey): number
       return dateCmp(a.lastActivityAt, b.lastActivityAt);
     case 'createdAt':
       return dateCmp(a.createdAt, b.createdAt);
+    case 'target': {
+      // Group by destination first (where it's going) then by source (where
+      // it's from). PRs landing on the same release branch end up adjacent.
+      const ad = stripRefForCmp(a.targets[0]?.destinationReference);
+      const bd = stripRefForCmp(b.targets[0]?.destinationReference);
+      const byDest = ad.localeCompare(bd);
+      if (byDest !== 0) return byDest;
+      const as = stripRefForCmp(a.targets[0]?.sourceReference);
+      const bs = stripRefForCmp(b.targets[0]?.sourceReference);
+      return as.localeCompare(bs);
+    }
   }
+}
+
+function stripRefForCmp(ref: string | undefined): string {
+  if (!ref) return '';
+  return ref.replace(/^refs\/heads\//, '').replace(/^refs\/tags\//, '');
 }
 
 function numericCmp(a: string, b: string): number {

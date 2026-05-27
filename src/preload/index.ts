@@ -4,7 +4,9 @@ import type {
   ApprovalAction,
   AwsProfileInfo,
   CommentDraft,
+  CommentNode,
   CommentThread,
+  DeleteCommentInput,
   ExpandLinesRequest,
   ExpandLinesResponse,
   FileDiff,
@@ -16,10 +18,12 @@ import type {
   PostCommentInput,
   PostReplyInput,
   PRDifferences,
+  ListDoneEvent,
+  ListErrorEvent,
+  ListItemEvent,
   PullRequestApprovalView,
   PullRequestDetail,
   PullRequestMergeability,
-  PullRequestSummary,
   RelativeFileVersion,
   RepositorySummary,
   ReviewedFile,
@@ -32,15 +36,22 @@ const CH = {
   credsClear: 'creds:clear',
   awsListProfiles: 'aws:list-profiles',
   reposList: 'repos:list',
-  prsList: 'prs:list',
+  // See main: streaming PR-list session channels.
+  prsListStart: 'prs:list-start',
+  prsListCancel: 'prs:list-cancel',
+  prsListItem: 'prs:list-item',
+  prsListDone: 'prs:list-done',
+  prsListError: 'prs:list-error',
   prsGet: 'prs:get',
   prsDifferences: 'prs:differences',
   prsFilePair: 'prs:file-pair',
   prsFileDiff: 'prs:file-diff',
   prsExpandLines: 'prs:expand-lines',
+  prsWebUrl: 'prs:web-url',
   commentsList: 'comments:list',
   commentsPost: 'comments:post',
   commentsReply: 'comments:reply',
+  commentsDelete: 'comments:delete',
   draftsList: 'drafts:list',
   draftsSave: 'drafts:save',
   draftsDelete: 'drafts:delete',
@@ -82,12 +93,49 @@ const api = {
       ipcRenderer.invoke(CH.reposList, opts),
   },
   prs: {
-    list: (
-      repositoryName: string,
-      filter: ListPRsFilter,
-      opts?: ReadOpts,
-    ): Promise<IpcResult<PullRequestSummary[]>> =>
-      ipcRenderer.invoke(CH.prsList, repositoryName, filter, opts),
+    // Start a streaming PR-list session. The renderer pre-generates sessionId
+    // (e.g. crypto.randomUUID()) so it can subscribe to item/done/error
+    // events *before* the IPC call lands. The returned promise resolves once
+    // the session is registered in main — actual results arrive over the
+    // event channels below.
+    startList: (payload: {
+      sessionId: string;
+      repositoryName: string;
+      filter: ListPRsFilter;
+      forceFresh?: boolean;
+    }): Promise<IpcResult<void>> =>
+      ipcRenderer.invoke(CH.prsListStart, payload),
+    // Cooperative cancel. Idempotent — safe to call on unmount even if the
+    // session already completed.
+    cancelList: (sessionId: string): Promise<IpcResult<void>> =>
+      ipcRenderer.invoke(CH.prsListCancel, sessionId),
+    // Subscribe to per-PR results streamed during *any* active session.
+    // The handler must filter by sessionId itself (a refresh racing a
+    // pending Load more is rare but possible). Returns unsubscribe.
+    onListItem: (
+      handler: (event: ListItemEvent) => void,
+    ): (() => void) => {
+      const listener = (_e: unknown, payload: ListItemEvent): void =>
+        handler(payload);
+      ipcRenderer.on(CH.prsListItem, listener);
+      return () => ipcRenderer.removeListener(CH.prsListItem, listener);
+    },
+    onListDone: (
+      handler: (event: ListDoneEvent) => void,
+    ): (() => void) => {
+      const listener = (_e: unknown, payload: ListDoneEvent): void =>
+        handler(payload);
+      ipcRenderer.on(CH.prsListDone, listener);
+      return () => ipcRenderer.removeListener(CH.prsListDone, listener);
+    },
+    onListError: (
+      handler: (event: ListErrorEvent) => void,
+    ): (() => void) => {
+      const listener = (_e: unknown, payload: ListErrorEvent): void =>
+        handler(payload);
+      ipcRenderer.on(CH.prsListError, listener);
+      return () => ipcRenderer.removeListener(CH.prsListError, listener);
+    },
     get: (
       repositoryName: string,
       pullRequestId: string,
@@ -121,6 +169,11 @@ const api = {
       request: ExpandLinesRequest,
     ): Promise<IpcResult<ExpandLinesResponse>> =>
       ipcRenderer.invoke(CH.prsExpandLines, request),
+    webUrl: (
+      repositoryName: string,
+      pullRequestId: string,
+    ): Promise<IpcResult<string | undefined>> =>
+      ipcRenderer.invoke(CH.prsWebUrl, repositoryName, pullRequestId),
   },
   comments: {
     list: (
@@ -133,6 +186,8 @@ const api = {
       ipcRenderer.invoke(CH.commentsPost, input),
     reply: (input: PostReplyInput): Promise<IpcResult<CommentThread>> =>
       ipcRenderer.invoke(CH.commentsReply, input),
+    delete: (input: DeleteCommentInput): Promise<IpcResult<CommentNode>> =>
+      ipcRenderer.invoke(CH.commentsDelete, input),
   },
   drafts: {
     list: (pullRequestId: string): Promise<IpcResult<CommentDraft[]>> =>

@@ -4,7 +4,9 @@ import type {
   ApprovalAction,
   AwsProfileInfo,
   CommentDraft,
+  CommentNode,
   CommentThread,
+  DeleteCommentInput,
   ExpandLinesRequest,
   ExpandLinesResponse,
   FileDiff,
@@ -16,15 +18,17 @@ import type {
   PostCommentInput,
   PostReplyInput,
   PRDifferences,
+  ListDoneEvent,
+  ListErrorEvent,
+  ListItemEvent,
   PullRequestApprovalView,
   PullRequestDetail,
   PullRequestMergeability,
-  PullRequestSummary,
   RelativeFileVersion,
   RepositorySummary,
   ReviewedFile,
 } from '@shared/types';
-import { CodeCommitProvider } from './providers/CodeCommitProvider';
+import { CodeCommitProvider, ProviderError } from './providers/CodeCommitProvider';
 import type { ReviewProvider } from './providers/ReviewProvider';
 import { listAwsProfiles } from './aws/profiles';
 import {
@@ -45,15 +49,23 @@ export const IPC = {
   credsClear: 'creds:clear',
   awsListProfiles: 'aws:list-profiles',
   reposList: 'repos:list',
-  prsList: 'prs:list',
+  // Streaming PR-list session: start kicks off enrichment, item/done/error
+  // events flow back via webContents.send, cancel aborts cooperatively.
+  prsListStart: 'prs:list-start',
+  prsListCancel: 'prs:list-cancel',
+  prsListItem: 'prs:list-item',
+  prsListDone: 'prs:list-done',
+  prsListError: 'prs:list-error',
   prsGet: 'prs:get',
   prsDifferences: 'prs:differences',
   prsFilePair: 'prs:file-pair',
   prsFileDiff: 'prs:file-diff',
   prsExpandLines: 'prs:expand-lines',
+  prsWebUrl: 'prs:web-url',
   commentsList: 'comments:list',
   commentsPost: 'comments:post',
   commentsReply: 'comments:reply',
+  commentsDelete: 'comments:delete',
   draftsList: 'drafts:list',
   draftsSave: 'drafts:save',
   draftsDelete: 'drafts:delete',
@@ -75,8 +87,20 @@ function ok<T>(value: T): IpcResult<T> {
 }
 
 function fail<T = never>(err: unknown): IpcResult<T> {
+  // ProviderError already carries a classified code + actionable hint; pass
+  // them through so the renderer can show real error UI instead of a raw
+  // exception string. Anything else (settings load errors, draft DB errors,
+  // unexpected throws) is reported as 'unknown' with no hint.
+  if (err instanceof ProviderError) {
+    return {
+      ok: false,
+      error: err.message,
+      errorCode: err.code,
+      errorHint: err.hint,
+    };
+  }
   const message = err instanceof Error ? err.message : String(err);
-  return { ok: false, error: message };
+  return { ok: false, error: message, errorCode: 'unknown' };
 }
 
 function invalidateProvider(): void {
@@ -90,9 +114,12 @@ async function getProvider(): Promise<ReviewProvider> {
     settings.credentialSource === 'keys' ? await readManualCredentials() : null;
 
   if (settings.credentialSource === 'keys' && !creds) {
-    throw new Error(
-      'Credential source is "keys" but no access keys are saved. Paste your AWS environment-variable block in Settings.',
-    );
+    throw new ProviderError({
+      message:
+        'Credential source is "keys" but no access keys are saved.',
+      code: 'credentials_missing',
+      hint: 'Open Settings and paste your AWS environment-variable block (the one that starts with `export AWS_ACCESS_KEY_ID=…`).',
+    });
   }
 
   const key = [
@@ -190,21 +217,86 @@ export function registerIpc(): void {
     },
   );
 
+  // Map from sessionId → AbortController for the streaming PR-list sessions.
+  // Lifecycle: created in prs:list-start, removed when the stream finishes
+  // (success, error, or abort). Multiple sessions can be in flight at once;
+  // the renderer guarantees they have distinct sessionIds.
+  const listSessions = new Map<string, AbortController>();
+
   ipcMain.handle(
-    IPC.prsList,
+    IPC.prsListStart,
     async (
-      _e,
-      repositoryName: string,
-      filter: ListPRsFilter,
-      opts?: { forceFresh?: boolean },
-    ): Promise<IpcResult<PullRequestSummary[]>> => {
+      e,
+      payload: {
+        sessionId: string;
+        repositoryName: string;
+        filter: ListPRsFilter;
+        forceFresh?: boolean;
+      },
+    ): Promise<IpcResult<void>> => {
       try {
+        const { sessionId, repositoryName, filter, forceFresh } = payload;
+        if (!sessionId) throw new Error('sessionId is required');
         if (!repositoryName) throw new Error('repositoryName is required');
+        if (listSessions.has(sessionId)) {
+          throw new Error(`sessionId ${sessionId} is already in use`);
+        }
         const p = await getProvider();
-        return ok(await p.listPullRequests(repositoryName, filter, opts));
+        const ac = new AbortController();
+        listSessions.set(sessionId, ac);
+        const wc = e.sender;
+
+        // Fire-and-forget: the stream runs in the background, pushing events
+        // back via webContents.send. The renderer awaits the start ack to
+        // confirm the session is registered (so a Cancel can land), then
+        // listens for item/done/error events keyed by sessionId.
+        void (async () => {
+          try {
+            const result = await p.streamPullRequests(repositoryName, filter, {
+              forceFresh,
+              signal: ac.signal,
+              onItem: ({ item, loaded, total }) => {
+                if (wc.isDestroyed()) return;
+                const ev: ListItemEvent = { sessionId, item, loaded, total };
+                wc.send(IPC.prsListItem, ev);
+              },
+            });
+            if (!wc.isDestroyed()) {
+              const ev: ListDoneEvent = { sessionId, ...result };
+              wc.send(IPC.prsListDone, ev);
+            }
+          } catch (err) {
+            if (!wc.isDestroyed()) {
+              const failed = fail(err);
+              const ev: ListErrorEvent = {
+                sessionId,
+                error: failed.ok ? 'unknown' : failed.error,
+                errorCode: failed.ok ? undefined : failed.errorCode,
+                errorHint: failed.ok ? undefined : failed.errorHint,
+              };
+              wc.send(IPC.prsListError, ev);
+            }
+          } finally {
+            listSessions.delete(sessionId);
+          }
+        })();
+
+        return ok(undefined);
       } catch (err) {
         return fail(err);
       }
+    },
+  );
+
+  ipcMain.handle(
+    IPC.prsListCancel,
+    async (_e, sessionId: string): Promise<IpcResult<void>> => {
+      const ac = listSessions.get(sessionId);
+      // Idempotent: cancelling an already-finished or never-started session
+      // is a no-op rather than an error. The renderer can fire cancel on
+      // unmount without checking session state.
+      if (ac) ac.abort();
+      return ok(undefined);
     },
   );
 
@@ -293,6 +385,22 @@ export function registerIpc(): void {
     },
   );
 
+  ipcMain.handle(
+    IPC.prsWebUrl,
+    async (
+      _e,
+      repositoryName: string,
+      pullRequestId: string,
+    ): Promise<IpcResult<string | undefined>> => {
+      try {
+        const p = await getProvider();
+        return ok(await p.webUrlForPullRequest(repositoryName, pullRequestId));
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
   // ---- comments -------------------------------------------------------
   ipcMain.handle(
     IPC.commentsList,
@@ -335,6 +443,21 @@ export function registerIpc(): void {
       try {
         const p = await getProvider();
         return ok(await p.postReply(input));
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IPC.commentsDelete,
+    async (
+      _e,
+      input: DeleteCommentInput,
+    ): Promise<IpcResult<CommentNode>> => {
+      try {
+        const p = await getProvider();
+        return ok(await p.deleteComment(input));
       } catch (err) {
         return fail(err);
       }

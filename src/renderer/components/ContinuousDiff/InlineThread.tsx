@@ -6,9 +6,20 @@ interface Props {
   thread: CommentThread;
   posting: boolean;
   onReply: (content: string) => Promise<void>;
+  // ARN of the caller (so we know which comments to offer "Delete" on) and
+  // the delete handler itself. Optional so existing callers don't break;
+  // when omitted, no Delete affordance is rendered.
+  selfArn?: string;
+  onDeleteComment?: (commentId: string) => Promise<void>;
 }
 
-export function InlineThread({ thread, posting, onReply }: Props): JSX.Element {
+export function InlineThread({
+  thread,
+  posting,
+  onReply,
+  selfArn,
+  onDeleteComment,
+}: Props): JSX.Element {
   const [replying, setReplying] = useState(false);
   const [text, setText] = useState('');
   const [err, setErr] = useState<string | null>(null);
@@ -41,12 +52,34 @@ export function InlineThread({ thread, posting, onReply }: Props): JSX.Element {
     }
   }
 
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  async function handleDelete(commentId: string): Promise<void> {
+    if (!onDeleteComment) return;
+    setDeletingId(commentId);
+    try {
+      await onDeleteComment(commentId);
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
   return (
     <div className="inline-thread">
       <ol className="thread-list">
         {thread.comments.map((c) => (
           <li key={c.id}>
-            <CommentLine c={c} />
+            <CommentLine
+              c={c}
+              canDelete={
+                !!selfArn &&
+                !!onDeleteComment &&
+                !c.deleted &&
+                c.authorArn === selfArn
+              }
+              deleting={deletingId === c.id}
+              onDelete={() => void handleDelete(c.id)}
+            />
           </li>
         ))}
       </ol>
@@ -89,12 +122,37 @@ export function InlineThread({ thread, posting, onReply }: Props): JSX.Element {
   );
 }
 
-function CommentLine({ c }: { c: CommentNode }): JSX.Element {
+function CommentLine({
+  c,
+  canDelete,
+  deleting,
+  onDelete,
+}: {
+  c: CommentNode;
+  canDelete: boolean;
+  deleting: boolean;
+  onDelete: () => void;
+}): JSX.Element {
   return (
     <div className={`comment${c.deleted ? ' deleted' : ''}`}>
       <div className="comment-head">
         <span className="author">{shortArn(c.authorArn)}</span>
         <span className="when">{fmt(c.createdAt)}</span>
+        {canDelete && (
+          <>
+            <span className="grow" />
+            <button
+              type="button"
+              className="comment-delete"
+              disabled={deleting}
+              onClick={onDelete}
+              aria-label="Delete this comment"
+              title="Delete this comment"
+            >
+              {deleting ? 'Deleting…' : 'Delete'}
+            </button>
+          </>
+        )}
       </div>
       <div className="comment-body">
         {c.deleted ? <i>(deleted)</i> : <Markdown source={c.content} />}

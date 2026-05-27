@@ -1,6 +1,8 @@
 import type {
   ApprovalAction,
+  CommentNode,
   CommentThread,
+  DeleteCommentInput,
   ExpandLinesRequest,
   ExpandLinesResponse,
   FileContent,
@@ -11,6 +13,7 @@ import type {
   PostCommentInput,
   PostReplyInput,
   PRDifferences,
+  ListSessionResult,
   PullRequestApprovalView,
   PullRequestDetail,
   PullRequestMergeability,
@@ -37,11 +40,22 @@ export interface ReviewProvider {
 
   // Repos & PRs
   listRepositories(opts?: ReadOptions): Promise<RepositorySummary[]>;
-  listPullRequests(
+  // Streaming PR-list session. The provider enumerates IDs, then enriches
+  // each one and pushes it to `onItem` *as it resolves* (in newest-first
+  // order — out-of-order arrivals are buffered until earlier items land).
+  // The returned promise resolves with the session summary after the last
+  // item is emitted (or the signal fires). Cooperative cancellation: the
+  // provider checks signal.aborted between enrichment batches; an aborted
+  // session resolves with `cancelled: true`, never rejects.
+  streamPullRequests(
     repositoryName: string,
     filter: ListPRsFilter,
-    opts?: ReadOptions,
-  ): Promise<PullRequestSummary[]>;
+    opts: {
+      forceFresh?: boolean;
+      signal?: AbortSignal;
+      onItem: (event: { item: PullRequestSummary; loaded: number; total: number }) => void;
+    },
+  ): Promise<ListSessionResult>;
   getPullRequest(
     repositoryName: string,
     pullRequestId: string,
@@ -79,6 +93,11 @@ export interface ReviewProvider {
   ): Promise<CommentThread[]>;
   postComment(input: PostCommentInput): Promise<CommentThread>;
   postReply(input: PostReplyInput): Promise<CommentThread>;
+  // Soft-delete a single comment. CodeCommit's DeleteCommentContent only
+  // clears the content (sets `deleted: true`); the comment node and its
+  // children remain so threads don't collapse. Provider implementations
+  // should refuse to delete comments not authored by the current user.
+  deleteComment(input: DeleteCommentInput): Promise<CommentNode>;
 
   // Approval
   getApprovalView(
@@ -99,6 +118,15 @@ export interface ReviewProvider {
     pullRequestId: string,
     opts?: ReadOptions,
   ): Promise<PullRequestMergeability>;
+
+  // Deep-link to the provider's own web UI for a given pull request. Used by
+  // the "View on AWS" button and similar — the renderer hands it to
+  // shell.openExternal. Implementations return undefined if they can't build
+  // a URL (e.g. missing region).
+  webUrlForPullRequest(
+    repositoryName: string,
+    pullRequestId: string,
+  ): Promise<string | undefined>;
 
   // Cache management. Implementations that don't cache can no-op these.
   invalidatePullRequest(

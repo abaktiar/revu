@@ -4,6 +4,7 @@ import type {
   CommentDraft,
   CommentThread,
   FileDiffEntry,
+  MergeabilityState,
   PostCommentInput,
   PRDifferences,
   PullRequestApprovalView,
@@ -25,6 +26,7 @@ import type {
 } from './ContinuousDiff/types';
 import { PRMetadata } from './PRMetadata';
 import { Markdown } from './Markdown';
+import { ErrorBanner } from './ErrorBanner';
 
 interface Props {
   repositoryName: string;
@@ -48,8 +50,9 @@ export function PRDetail({
   const [mergeability, setMergeability] =
     useState<PullRequestMergeability | null>(null);
   const [metaOpen, setMetaOpen] = useState(true);
+  const [webUrl, setWebUrl] = useState<string | undefined>(undefined);
   const [postingThreadId, setPostingThreadId] = useState<string | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<unknown>(null);
   const [showGeneral, setShowGeneral] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshToken, setRefreshToken] = useState(0);
@@ -92,9 +95,9 @@ export function PRDetail({
         setMergeability(merge);
         setRefreshing(false);
       })
-      .catch((err: Error) => {
+      .catch((err: unknown) => {
         if (cancelled) return;
-        setLoadError(err.message);
+        setLoadError(err);
         setRefreshing(false);
       });
 
@@ -102,6 +105,23 @@ export function PRDetail({
       cancelled = true;
     };
   }, [repositoryName, pullRequest.id, refreshToken]);
+
+  // Resolve the provider's deep-link to the PR's web UI (AWS Console for the
+  // CodeCommit provider). Region is held by the provider, so we just ask. If
+  // it returns undefined (no region configured), we just won't render the link.
+  useEffect(() => {
+    let cancelled = false;
+    unwrap(api.prs.webUrl(repositoryName, pullRequest.id))
+      .then((u) => {
+        if (!cancelled) setWebUrl(u);
+      })
+      .catch(() => {
+        if (!cancelled) setWebUrl(undefined);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [repositoryName, pullRequest.id]);
 
   // Hard refresh: drop every cached entry tied to this PR (and the in-memory
   // blob cache, since file diffs are keyed by blob IDs and we want truly
@@ -151,7 +171,7 @@ export function PRDetail({
       );
       setThreads(fresh);
     } catch (err) {
-      setLoadError(err instanceof Error ? err.message : String(err));
+      setLoadError(err);
     }
   }, [repositoryName, pullRequest.id]);
 
@@ -214,6 +234,42 @@ export function PRDetail({
     setDrafts((cur) => cur.filter((d) => d.id !== id));
   }, []);
 
+  // Soft-delete a posted CodeCommit comment. Done via the provider — AWS
+  // requires the caller be the author. We optimistically update the local
+  // thread list so the UI reflects the soft-delete immediately, then refresh
+  // from the server to pick up any contention with concurrent edits.
+  const deleteComment = useCallback(
+    async (commentId: string): Promise<void> => {
+      const confirmed = window.confirm(
+        'Delete this comment? This clears the content on AWS but keeps the comment in the thread.',
+      );
+      if (!confirmed) return;
+      setThreads((cur) =>
+        cur.map((t) => ({
+          ...t,
+          comments: t.comments.map((c) =>
+            c.id === commentId ? { ...c, deleted: true, content: '' } : c,
+          ),
+        })),
+      );
+      try {
+        await unwrap(
+          api.comments.delete({
+            commentId,
+            pullRequestId: pullRequest.id,
+            repositoryName,
+          }),
+        );
+      } catch (err) {
+        // Roll back the optimistic update by re-fetching the truth.
+        setLoadError(err);
+      } finally {
+        await refreshThreads();
+      }
+    },
+    [pullRequest.id, repositoryName, refreshThreads],
+  );
+
   const toggleReviewed = useCallback(
     async (file: FileDiffEntry, next: boolean): Promise<void> => {
       if (!differences) return;
@@ -231,7 +287,7 @@ export function PRDetail({
           return entry ? [...filtered, entry] : filtered;
         });
       } catch (err) {
-        setLoadError(err instanceof Error ? err.message : String(err));
+        setLoadError(err);
       }
     },
     [differences, pullRequest.id],
@@ -262,12 +318,14 @@ export function PRDetail({
       beforeCommitId: differences.beforeCommitId,
       afterCommitId: differences.afterCommitId,
       postingThreadId,
+      selfArn: approval?.selfArn,
     };
   }, [
     differences,
     pullRequest.id,
     repositoryName,
     postingThreadId,
+    approval?.selfArn,
   ]);
 
   const callbacks: DiffCallbacks = useMemo(
@@ -276,9 +334,17 @@ export function PRDetail({
       onPostReply: postReply,
       onSaveDraft: saveDraft,
       onDeleteDraft: deleteDraft,
+      onDeleteComment: deleteComment,
       onToggleReviewed: toggleReviewedSync,
     }),
-    [postComment, postReply, saveDraft, deleteDraft, toggleReviewedSync],
+    [
+      postComment,
+      postReply,
+      saveDraft,
+      deleteDraft,
+      deleteComment,
+      toggleReviewedSync,
+    ],
   );
 
   const onActiveFileChange = useCallback((path: string | null): void => {
@@ -304,7 +370,7 @@ export function PRDetail({
         const fresh = await unwrap(api.prs.get(repositoryName, pullRequest.id));
         setDetail(fresh);
       } catch (err) {
-        setLoadError(err instanceof Error ? err.message : String(err));
+        setLoadError(err);
       } finally {
         setApprovalBusy(false);
       }
@@ -329,38 +395,35 @@ export function PRDetail({
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  const toolbarProps = {
+    pr: pullRequest,
+    detail,
+    approval,
+    mergeability,
+    approvalBusy,
+    onApprove: () => void applyApproval('APPROVE'),
+    onRevoke: () => void applyApproval('REVOKE'),
+    onBack,
+    generalCount: generalComments.length,
+    showGeneral,
+    onToggleGeneral: () => setShowGeneral((v) => !v),
+    metaOpen,
+    onToggleMeta: () => setMetaOpen((v) => !v),
+    refreshing,
+    onRefresh: () => void onRefresh(),
+  };
+
   if (loadError) {
     return (
       <div className="pr-detail">
-        <Toolbar
-          pr={pullRequest}
-          detail={detail}
-          approval={approval}
-          approvalBusy={approvalBusy}
-          onApprove={() => void applyApproval('APPROVE')}
-          onRevoke={() => void applyApproval('REVOKE')}
-          onBack={onBack}
-          generalCount={generalComments.length}
-          showGeneral={showGeneral}
-          onToggleGeneral={() => setShowGeneral((v) => !v)}
-          metaOpen={metaOpen}
-          onToggleMeta={() => setMetaOpen((v) => !v)}
-          refreshing={refreshing}
-          onRefresh={() => void onRefresh()}
+        <Toolbar {...toolbarProps} />
+        <ErrorBanner
+          title="Could not load PR data."
+          error={loadError}
+          onRetry={() => void onRefresh()}
+          retryLabel="Retry"
+          retrying={refreshing}
         />
-        <div className="error">
-          <div>Could not load PR data.</div>
-          <pre>{loadError}</pre>
-          <div className="error-actions">
-            <button
-              className="primary"
-              onClick={() => void onRefresh()}
-              disabled={refreshing}
-            >
-              {refreshing ? 'Retrying…' : 'Retry'}
-            </button>
-          </div>
-        </div>
       </div>
     );
   }
@@ -368,22 +431,7 @@ export function PRDetail({
   if (!differences || !detail) {
     return (
       <div className="pr-detail">
-        <Toolbar
-          pr={pullRequest}
-          detail={detail}
-          approval={approval}
-          approvalBusy={approvalBusy}
-          onApprove={() => void applyApproval('APPROVE')}
-          onRevoke={() => void applyApproval('REVOKE')}
-          onBack={onBack}
-          generalCount={generalComments.length}
-          showGeneral={showGeneral}
-          onToggleGeneral={() => setShowGeneral((v) => !v)}
-          metaOpen={metaOpen}
-          onToggleMeta={() => setMetaOpen((v) => !v)}
-          refreshing={refreshing}
-          onRefresh={() => void onRefresh()}
-        />
+        <Toolbar {...toolbarProps} />
         <div className="loading">Loading PR…</div>
       </div>
     );
@@ -391,32 +439,19 @@ export function PRDetail({
 
   return (
     <div className="pr-detail">
-      <Toolbar
-        pr={pullRequest}
-        detail={detail}
-        approval={approval}
-        approvalBusy={approvalBusy}
-        onApprove={() => void applyApproval('APPROVE')}
-        onRevoke={() => void applyApproval('REVOKE')}
-        onBack={onBack}
-        generalCount={generalComments.length}
-        showGeneral={showGeneral}
-        onToggleGeneral={() => setShowGeneral((v) => !v)}
-        metaOpen={metaOpen}
-        onToggleMeta={() => setMetaOpen((v) => !v)}
-        refreshing={refreshing}
-        onRefresh={() => void onRefresh()}
-      />
+      <Toolbar {...toolbarProps} />
       {metaOpen && (
         <PRMetadata
           detail={detail}
           differences={differences}
           mergeability={mergeability}
+          approval={approval}
           approvalCount={
             approval?.states.filter((s) => s.approvalState === 'APPROVE').length ?? 0
           }
           fileCount={differences.files.length}
           selfApproved={approval?.selfApproved ?? false}
+          webUrl={webUrl}
         />
       )}
       <div className="pr-body">
@@ -452,17 +487,44 @@ export function PRDetail({
             </div>
             {generalComments.map((t) => (
               <div key={t.threadId} className="thread thread-flat">
-                {t.comments.map((c) => (
-                  <div key={c.id} className="comment">
-                    <div className="comment-head">
-                      <span className="author">{shortArn(c.authorArn)}</span>
-                      <span className="when">{fmt(c.createdAt)}</span>
+                {t.comments.map((c) => {
+                  const canDelete =
+                    !!approval?.selfArn &&
+                    !c.deleted &&
+                    c.authorArn === approval.selfArn;
+                  return (
+                    <div
+                      key={c.id}
+                      className={`comment${c.deleted ? ' deleted' : ''}`}
+                    >
+                      <div className="comment-head">
+                        <span className="author">{shortArn(c.authorArn)}</span>
+                        <span className="when">{fmt(c.createdAt)}</span>
+                        {canDelete && (
+                          <>
+                            <span className="grow" />
+                            <button
+                              type="button"
+                              className="comment-delete"
+                              onClick={() => void deleteComment(c.id)}
+                              aria-label="Delete this comment"
+                              title="Delete this comment"
+                            >
+                              Delete
+                            </button>
+                          </>
+                        )}
+                      </div>
+                      <div className="comment-body">
+                        {c.deleted ? (
+                          <i>(deleted)</i>
+                        ) : (
+                          <Markdown source={c.content} />
+                        )}
+                      </div>
                     </div>
-                    <div className="comment-body">
-                      <Markdown source={c.content} />
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             ))}
           </aside>
@@ -476,6 +538,7 @@ function Toolbar({
   pr,
   detail,
   approval,
+  mergeability,
   approvalBusy,
   onApprove,
   onRevoke,
@@ -491,6 +554,7 @@ function Toolbar({
   pr: PullRequestSummary;
   detail: PullRequestDetail | null;
   approval: PullRequestApprovalView | null;
+  mergeability: PullRequestMergeability | null;
   approvalBusy: boolean;
   onApprove: () => void;
   onRevoke: () => void;
@@ -505,24 +569,32 @@ function Toolbar({
 }): JSX.Element {
   const approvedCount =
     approval?.states.filter((s) => s.approvalState === 'APPROVE').length ?? 0;
+
+  // When the details panel is open it already shows status / approval /
+  // mergeability badges and approval count. Showing the same chips in the
+  // toolbar is just duplication. Collapse those into the toolbar ONLY when
+  // the details panel is hidden, so the user still has the essentials.
+  const showInlineBadges = !metaOpen;
+
   return (
     <div className="pr-toolbar">
       <button onClick={onBack}>← Back</button>
       <span className="pr-title">
         <span className="id">#{pr.id}</span> {pr.title}
       </span>
-      {detail && (
+      {showInlineBadges && detail && (
         <>
           <span className={`badge ${detail.status}`}>{detail.status}</span>
+          {mergeability && <ToolbarMergeBadge m={mergeability} />}
           <span className={`badge ${detail.approvalState}`}>
             {detail.approvalState.replace('_', ' ')}
           </span>
+          {approval && (
+            <span className="hint">
+              {approvedCount} approval{approvedCount === 1 ? '' : 's'}
+            </span>
+          )}
         </>
-      )}
-      {approval && (
-        <span className="hint">
-          {approvedCount} approval{approvedCount === 1 ? '' : 's'}
-        </span>
       )}
       <span className="grow" />
       <button
@@ -552,6 +624,52 @@ function Toolbar({
         ))}
     </div>
   );
+}
+
+// Compact mergeability badge for the toolbar. Mirrors PRMetadata's badge but
+// without the long tooltip strings — the details panel owns the rich version.
+function ToolbarMergeBadge({
+  m,
+}: {
+  m: PullRequestMergeability;
+}): JSX.Element | null {
+  // Closed-without-merge: the parent already renders the "CLOSED" status
+  // badge. A second badge here would just repeat the information.
+  if (m.state === 'closed_unmerged') return null;
+  const cls: Record<Exclude<MergeabilityState, 'closed_unmerged'>, string> = {
+    already_merged: 'MERGED',
+    mergeable: 'APPROVED',
+    has_conflicts: 'NOT_APPROVED',
+    unknown: 'UNKNOWN',
+  };
+  const label: Record<Exclude<MergeabilityState, 'closed_unmerged'>, string> = {
+    already_merged: 'MERGED',
+    mergeable: 'MERGEABLE',
+    has_conflicts: 'CONFLICTS',
+    unknown: 'UNKNOWN',
+  };
+  return (
+    <span className={`badge ${cls[m.state]}`} title={mergeTooltip(m)}>
+      {label[m.state]}
+      {m.state === 'has_conflicts' && m.conflictCount
+        ? ` (${m.conflictCount})`
+        : ''}
+    </span>
+  );
+}
+
+function mergeTooltip(m: PullRequestMergeability): string {
+  switch (m.state) {
+    case 'already_merged':
+      return m.mergedBy ? `Merged by ${shortArn(m.mergedBy)}` : 'Merged';
+    case 'mergeable':
+      return `Mergeable via: ${m.mergeOptions.join(', ') || '?'}`;
+    case 'has_conflicts':
+      return m.reason ?? 'Manual merge required';
+    case 'unknown':
+    default:
+      return m.reason ?? "Mergeability couldn't be determined";
+  }
 }
 
 function shortArn(arn: string | undefined): string {
