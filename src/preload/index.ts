@@ -60,6 +60,7 @@ export interface ReadOpts {
 }
 
 const api = {
+  platform: process.platform,
   settings: {
     get: (): Promise<IpcResult<AppSettings>> =>
       ipcRenderer.invoke(CH.settingsGet),

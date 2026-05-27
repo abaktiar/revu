@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { registerIpc } from './ipc';
 
 const isDev = !app.isPackaged;
+const isMac = process.platform === 'darwin';
 
 function createWindow(): void {
   const win = new BrowserWindow({
@@ -12,7 +13,15 @@ function createWindow(): void {
     minHeight: 600,
     show: false,
     title: 'revu',
-    backgroundColor: '#0f1115',
+    transparent: isMac,
+    backgroundColor: isMac ? '#00000000' : '#0f1115',
+    ...(isMac
+      ? {
+          titleBarStyle: 'hiddenInset' as const,
+          vibrancy: 'under-window' as const,
+          visualEffectState: 'followWindow' as const,
+        }
+      : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,

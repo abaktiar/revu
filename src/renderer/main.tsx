@@ -8,6 +8,8 @@ import 'highlight.js/styles/github-dark.css';
 const container = document.getElementById('root');
 if (!container) throw new Error('#root not found');
 
+document.documentElement.classList.add(`platform-${window.revu.platform}`);
+
 createRoot(container).render(
   <StrictMode>
     <App />
