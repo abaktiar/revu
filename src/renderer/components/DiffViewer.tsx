@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { monaco } from '../monaco/setup';
 import { languageFor } from '../monaco/language';
+import { useResolvedTheme } from '../theme';
 import type {
   CommentDraft,
   CommentThread,
@@ -78,6 +79,7 @@ export function DiffViewer(props: Props): JSX.Element {
   propsRef.current = props;
 
   const language = useMemo(() => languageFor(props.filePath), [props.filePath]);
+  const resolvedTheme = useResolvedTheme();
 
   // ---- Mount Monaco diff editor once ---------------------------------
   useEffect(() => {
@@ -93,7 +95,7 @@ export function DiffViewer(props: Props): JSX.Element {
       ignoreTrimWhitespace: false,
       fontSize: 12,
       lineNumbersMinChars: 4,
-      theme: 'vs-dark',
+      theme: resolvedTheme === 'dark' ? 'vs-dark' : 'vs',
       glyphMargin: true,
       // VS Code-style collapsed unchanged regions with click-to-expand.
       hideUnchangedRegions: {
@@ -145,6 +147,14 @@ export function DiffViewer(props: Props): JSX.Element {
     if (!editor) return;
     editor.updateOptions({ renderSideBySide: props.diffMode === 'split' });
   }, [props.diffMode]);
+
+  // ---- Follow theme changes -----------------------------------------
+  // Monaco's theme is a global registration; switching it on either editor
+  // updates every Monaco instance in the renderer. That's fine — only one
+  // diff editor is ever mounted.
+  useEffect(() => {
+    monaco.editor.setTheme(resolvedTheme === 'dark' ? 'vs-dark' : 'vs');
+  }, [resolvedTheme]);
 
   // ---- Swap models when file or content changes ----------------------
   useEffect(() => {

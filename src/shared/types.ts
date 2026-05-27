@@ -105,12 +105,17 @@ export interface ManualCredentialsInput {
   sessionToken?: string;
 }
 
+// User's theme choice. 'system' follows the OS via prefers-color-scheme;
+// 'light'/'dark' are explicit overrides. Default is 'system'.
+export type ThemePreference = 'light' | 'dark' | 'system';
+
 export interface AppSettings {
   credentialSource: CredentialSource;
   profile?: string; // when credentialSource === 'profile'
   region?: string;
   repositoryName?: string;
   favoriteRepos: string[];
+  themePreference: ThemePreference;
   // Whether encrypted manual keys exist on disk. The renderer uses this to
   // know if a "Keys saved" state should be shown. The actual keys never
   // travel back to the renderer.

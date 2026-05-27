@@ -14,7 +14,7 @@ function createWindow(): void {
     show: false,
     title: 'revu',
     transparent: isMac,
-    backgroundColor: isMac ? '#00000000' : '#0f1115',
+    backgroundColor: isMac ? '#00000000' : '#0a0a0a',
     ...(isMac
       ? {
           titleBarStyle: 'hiddenInset' as const,

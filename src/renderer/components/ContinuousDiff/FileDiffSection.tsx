@@ -214,6 +214,21 @@ function FileDiffSectionImpl({
     [renderDiff],
   );
   const totalLines = renderDiff ? totalDiffLines(renderDiff) : 0;
+  // Warp-style per-file stats. Only computed once the diff has loaded (the
+  // FileDiffEntry alone doesn't carry line counts). Until then the chip is
+  // omitted from the header so we don't render a placeholder.
+  const diffStats = useMemo(() => {
+    if (!renderDiff) return null;
+    let added = 0;
+    let deleted = 0;
+    for (const h of renderDiff.hunks) {
+      for (const l of h.lines) {
+        if (l.type === 'add') added++;
+        else if (l.type === 'del') deleted++;
+      }
+    }
+    return { added, deleted };
+  }, [renderDiff]);
 
   // Which hunk (if any) contains the line the composer is open on. Computed
   // once per render of this section so each HunkView gets a plain
@@ -267,6 +282,16 @@ function FileDiffSectionImpl({
           entry.beforePath !== entry.afterPath && (
             <span className="hint">← {entry.beforePath}</span>
           )}
+        {diffStats && (
+          <span
+            className="diff-stats"
+            title={`${diffStats.added} added, ${diffStats.deleted} deleted`}
+          >
+            <span className="diff-stats-add">+{diffStats.added}</span>
+            <span className="diff-stats-sep">·</span>
+            <span className="diff-stats-del">-{diffStats.deleted}</span>
+          </span>
+        )}
         {autoCollapsed && collapsed && totalLines > 0 && (
           <span className="hint" title="Large diff. Collapsed by default; click ▶ to render.">
             large diff ({totalLines.toLocaleString()} lines)

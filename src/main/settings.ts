@@ -12,6 +12,7 @@ type PersistedSettings = Omit<AppSettings, 'hasManualKeys'>;
 const DEFAULTS: PersistedSettings = {
   credentialSource: 'profile',
   favoriteRepos: [],
+  themePreference: 'system',
 };
 
 let cache: PersistedSettings | null = null;
@@ -39,6 +40,7 @@ export async function saveSettings(
     region: next.region,
     repositoryName: next.repositoryName,
     favoriteRepos: dedupe(next.favoriteRepos),
+    themePreference: next.themePreference ?? 'system',
   };
   cache = cleaned;
   await fs.writeFile(settingsPath(), JSON.stringify(cleaned, null, 2), 'utf8');
@@ -99,6 +101,7 @@ async function loadPersisted(): Promise<PersistedSettings> {
       region: parsed.region,
       repositoryName: parsed.repositoryName,
       favoriteRepos: dedupe(parsed.favoriteRepos ?? []),
+      themePreference: parsed.themePreference ?? DEFAULTS.themePreference,
     };
     return cache;
   } catch (err: unknown) {

@@ -244,13 +244,18 @@ function DiffLineRow({
   highlightedHtml: string;
   onAdd?: () => void;
 }): JSX.Element {
-  const marker = line.type === 'add' ? '+' : line.type === 'del' ? '-' : ' ';
+  const marker = line.type === 'add' ? '+' : line.type === 'del' ? '−' : '';
+  // Unified single-gutter layout: del rows show their old position; add and
+  // context rows show the new position. Context lines where old/new diverge
+  // give up that detail in exchange for a quieter, GitHub-style gutter.
+  const displayLineNumber =
+    line.type === 'del' ? line.oldLineNumber : line.newLineNumber;
   // Empty lines should still take a row's worth of vertical space.
   const html = highlightedHtml.length > 0 ? highlightedHtml : '&nbsp;';
   return (
     <div className={`drow drow-${line.type}`}>
-      <div className="dgutter old">
-        {line.oldLineNumber ?? ''}
+      <div className="dgutter">
+        {displayLineNumber ?? ''}
         {onAdd && (
           <button
             className="add-comment-btn"
@@ -261,7 +266,6 @@ function DiffLineRow({
           </button>
         )}
       </div>
-      <div className="dgutter new">{line.newLineNumber ?? ''}</div>
       <div className="dmark">{marker}</div>
       <div
         className="dcontent hljs"

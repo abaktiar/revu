@@ -1,26 +1,110 @@
-:root {
+/* ---- Theme tokens ---------------------------------------------------- */
+/* Token values live in three blocks:
+ *   :root                     — default = Warp-inspired dark.
+ *   :root[data-theme='dark']  — same as default; redundant for clarity.
+ *   :root[data-theme='light'] — light-theme overrides.
+ * theme.ts toggles data-theme on <html>; nothing else here cares which is
+ * active. New colors should be added as tokens, not hardcoded — otherwise
+ * the light theme won't pick them up.
+ */
+:root,
+:root[data-theme='dark'] {
   color-scheme: dark;
-  --bg: #0f1115;
-  --panel: #161a22;
-  --panel-2: #1c2230;
-  --border: #262d3c;
-  --text: #e6e9ef;
-  --text-dim: #8a93a6;
-  --accent: #5b8def;
-  --accent-fade: #2a3a5e;
-  --ok: #4ade80;
-  --warn: #facc15;
-  --bad: #f87171;
-  --neutral: #94a3b8;
-  --control: #212837;
-  --control-hover: #273044;
-  --control-active: #1a2030;
-  --focus-ring: rgba(91, 141, 239, 0.34);
-  --primary-text: #f7faff;
+  /* Warp Dark — matches warp_bundled/warp_dark.yaml from the Warp themes
+   * repo (the "Warp Dark" entry in the in-app theme picker). Pure-black
+   * canvas, cyan accent, vivid green/red diff colors. The `*-rgb` triplets
+   * exist so rgba() literals elsewhere in this file can pick up the theme's
+   * colors without hardcoding hex values — every literal references one of
+   * these tokens. */
+  --accent-rgb: 0, 194, 255;
+  --ok-rgb: 180, 250, 114;
+  --bad-rgb: 255, 130, 114;
+  --warn-rgb: 254, 253, 194;
+  --neutral-rgb: 142, 142, 142;
+  /* Dedicated diff palette — kept separate from --ok-rgb / --bad-rgb so the
+   * status colors used for badges and toasts (Warp's yellow-leaning lime and
+   * salmon) don't drag the diff wash into the same hue. These are GitHub's
+   * #3fb950 / #f85149 — true green / true red so the wash reads cleanly
+   * over the near-black panel. */
+  --diff-add-rgb: 63, 185, 80;
+  --diff-del-rgb: 248, 81, 73;
+
+  --bg: #0a0a0a;
+  --panel: #181818;
+  --panel-2: #222222;
+  --border: #2a2a2a;
+  --text: #ffffff;
+  --text-dim: #8e8e8e;
+  --accent: #00c2ff;
+  --accent-fade: #003140;
+  --ok: #b4fa72;
+  --warn: #fefdc2;
+  --bad: #ff8272;
+  --neutral: #8e8e8e;
+  --control: #1f1f1f;
+  --control-hover: #2a2a2a;
+  --control-active: #151515;
+  --focus-ring: rgba(var(--accent-rgb), 0.34);
+  --primary-text: #ffffff;
+
+  /* Diff add/del — translucent tints over the panel surface. The colour reads
+   * as a soft wash rather than a solid block; the panel grain shows through.
+   * Gutters use a quieter alpha so the line numbers feel like scaffolding,
+   * not part of the change. Text uses the brightened-out form of the same
+   * hue so it sits cleanly on top of the tint without losing the syntax
+   * highlight palette underneath. */
+  --diff-add-bg: rgba(var(--diff-add-rgb), 0.20);
+  --diff-add-gutter: rgba(var(--diff-add-rgb), 0.10);
+  --diff-add-text: #aff5b4;
+  --diff-del-bg: rgba(var(--diff-del-rgb), 0.20);
+  --diff-del-gutter: rgba(var(--diff-del-rgb), 0.10);
+  --diff-del-text: #ffb4b0;
+
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Ubuntu,
     sans-serif;
   font-size: 13px;
   color: var(--text);
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  --accent-rgb: 9, 105, 218;
+  --ok-rgb: 26, 127, 55;
+  --bad-rgb: 207, 34, 46;
+  --warn-rgb: 154, 103, 0;
+  --neutral-rgb: 101, 109, 118;
+  /* GitHub light's diff base — same hues as the dark theme but skewed
+   * slightly cooler/darker for legibility over a white surface. */
+  --diff-add-rgb: 46, 160, 67;
+  --diff-del-rgb: 207, 34, 46;
+
+  --bg: #ffffff;
+  --panel: #f6f8fa;
+  --panel-2: #eaeef2;
+  --border: #d0d7de;
+  --text: #1f2328;
+  --text-dim: #656d76;
+  --accent: #0969da;
+  --accent-fade: #ddf4ff;
+  --ok: #1a7f37;
+  --warn: #9a6700;
+  --bad: #cf222e;
+  --neutral: #656d76;
+  --control: #f6f8fa;
+  --control-hover: #eaeef2;
+  --control-active: #d0d7de;
+  --focus-ring: rgba(var(--accent-rgb), 0.32);
+  --primary-text: #ffffff;
+
+  /* Light-theme translucent diff tints. Same recipe as dark, just resolves
+   * over the white panel surface — alpha values nudged up because tints
+   * read quieter on white than on near-black. */
+  --diff-add-bg: rgba(var(--diff-add-rgb), 0.18);
+  --diff-add-gutter: rgba(var(--diff-add-rgb), 0.10);
+  --diff-add-text: #1a7f37;
+  --diff-del-bg: rgba(var(--diff-del-rgb), 0.18);
+  --diff-del-gutter: rgba(var(--diff-del-rgb), 0.10);
+  --diff-del-text: #82071e;
 }
 
 * {
@@ -105,7 +189,7 @@ button.primary {
 input,
 select,
 textarea {
-  background: rgba(28, 34, 48, 0.95);
+  background: var(--panel-2);
   border: 1px solid var(--border);
   border-radius: 7px;
   padding: 6px 10px;
@@ -412,38 +496,38 @@ table.prs th:focus-visible {
 }
 
 .badge.OPEN {
-  background: rgba(74, 222, 128, 0.12);
+  background: rgba(var(--ok-rgb), 0.12);
   color: var(--ok);
-  border-color: rgba(74, 222, 128, 0.4);
+  border-color: rgba(var(--ok-rgb), 0.4);
 }
 
 .badge.CLOSED {
-  background: rgba(148, 163, 184, 0.12);
+  background: rgba(var(--neutral-rgb), 0.12);
   color: var(--neutral);
-  border-color: rgba(148, 163, 184, 0.3);
+  border-color: rgba(var(--neutral-rgb), 0.3);
 }
 
 .badge.MERGED {
-  background: rgba(91, 141, 239, 0.12);
+  background: rgba(var(--accent-rgb), 0.12);
   color: var(--accent);
-  border-color: rgba(91, 141, 239, 0.4);
+  border-color: rgba(var(--accent-rgb), 0.4);
 }
 
 .badge.APPROVED {
-  background: rgba(74, 222, 128, 0.12);
+  background: rgba(var(--ok-rgb), 0.12);
   color: var(--ok);
-  border-color: rgba(74, 222, 128, 0.4);
+  border-color: rgba(var(--ok-rgb), 0.4);
 }
 
 .badge.NOT_APPROVED {
-  background: rgba(248, 113, 113, 0.12);
+  background: rgba(var(--bad-rgb), 0.12);
   color: var(--bad);
-  border-color: rgba(248, 113, 113, 0.4);
+  border-color: rgba(var(--bad-rgb), 0.4);
 }
 
 .badge.NO_RULES,
 .badge.UNKNOWN {
-  background: rgba(148, 163, 184, 0.1);
+  background: rgba(var(--neutral-rgb), 0.1);
   color: var(--text-dim);
   border-color: var(--border);
 }
@@ -855,8 +939,8 @@ table.prs th:focus-visible {
 
 .file-sidebar li.active {
   background: var(--accent-fade);
-  border-color: rgba(91, 141, 239, 0.32);
-  box-shadow: inset 0 0 0 1px rgba(91, 141, 239, 0.1);
+  border-color: rgba(var(--accent-rgb), 0.32);
+  box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), 0.1);
 }
 
 .file-sidebar li.reviewed {
@@ -895,22 +979,22 @@ table.prs th:focus-visible {
 }
 
 .ct-A {
-  background: rgba(74, 222, 128, 0.18);
+  background: rgba(var(--ok-rgb), 0.18);
   color: var(--ok);
 }
 
 .ct-M {
-  background: rgba(250, 204, 21, 0.18);
+  background: rgba(var(--warn-rgb), 0.18);
   color: var(--warn);
 }
 
 .ct-D {
-  background: rgba(248, 113, 113, 0.18);
+  background: rgba(var(--bad-rgb), 0.18);
   color: var(--bad);
 }
 
 .ct-R {
-  background: rgba(91, 141, 239, 0.18);
+  background: rgba(var(--accent-rgb), 0.18);
   color: var(--accent);
 }
 
@@ -921,6 +1005,38 @@ table.prs th:focus-visible {
   padding: 1px 6px;
   border-radius: 999px;
   margin-left: auto;
+}
+
+/* Per-file diff stats chip. Sits in the file-section header next to the file
+ * path; compact, dark-bg pill with mono tabular numerals so the +N / -M digits
+ * align across files when the eye scans the column. */
+.diff-stats {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+}
+
+.diff-stats-add {
+  color: var(--ok);
+  font-weight: 600;
+}
+
+.diff-stats-del {
+  color: var(--bad);
+  font-weight: 600;
+}
+
+.diff-stats-sep {
+  color: var(--text-dim);
+  font-weight: 400;
 }
 
 .diff-area {
@@ -1046,12 +1162,12 @@ kbd {
 }
 
 .branch.source {
-  border-color: rgba(91, 141, 239, 0.4);
+  border-color: rgba(var(--accent-rgb), 0.4);
   color: var(--accent);
 }
 
 .branch.dest {
-  border-color: rgba(74, 222, 128, 0.4);
+  border-color: rgba(var(--ok-rgb), 0.4);
   color: var(--ok);
 }
 
@@ -1117,7 +1233,7 @@ table.prs tr.clickable:focus-within .row-external,
 }
 
 .row-external:hover {
-  background: rgba(91, 141, 239, 0.14);
+  background: rgba(var(--accent-rgb), 0.14);
   color: var(--accent);
 }
 
@@ -1214,7 +1330,7 @@ table.prs tr.clickable:focus-within .row-external,
 }
 
 .pr-description-toggle:hover {
-  background: rgba(91, 141, 239, 0.12);
+  background: rgba(var(--accent-rgb), 0.12);
 }
 
 /* ---- Approvers chip list -------------------------------------------- */
@@ -1238,8 +1354,8 @@ table.prs tr.clickable:focus-within .row-external,
   align-items: center;
   gap: 6px;
   padding: 3px 8px;
-  background: rgba(74, 222, 128, 0.1);
-  border: 1px solid rgba(74, 222, 128, 0.32);
+  background: rgba(var(--ok-rgb), 0.1);
+  border: 1px solid rgba(var(--ok-rgb), 0.32);
   border-radius: 999px;
   font-size: 11px;
   line-height: 1;
@@ -1258,7 +1374,7 @@ table.prs tr.clickable:focus-within .row-external,
 }
 
 .pr-approver-self {
-  background: rgba(91, 141, 239, 0.18);
+  background: rgba(var(--accent-rgb), 0.18);
   color: var(--accent);
   font-size: 10px;
   padding: 1px 5px;
@@ -1293,7 +1409,7 @@ table.prs tr.clickable:focus-within .row-external,
 }
 
 .pr-aws-link:hover {
-  background: rgba(91, 141, 239, 0.12);
+  background: rgba(var(--accent-rgb), 0.12);
   text-decoration: underline;
 }
 
@@ -1419,7 +1535,7 @@ table.prs tr.clickable:focus-within .row-external,
 
 .drow {
   display: grid;
-  grid-template-columns: 48px 48px 18px 1fr;
+  grid-template-columns: 52px 18px 1fr;
   /* We intentionally do NOT set content-visibility on individual rows.
    * Per-row content-visibility forces the browser to maintain a paint
    * container for every one of (potentially) thousands of rows, and the
@@ -1436,6 +1552,11 @@ table.prs tr.clickable:focus-within .row-external,
   padding: 0 6px;
 }
 
+/* Unified single-column gutter. The line number lives in .dgutter; the
+ * marker lives in .dmark immediately to its right. Both cells carry the
+ * same panel background by default, and the same diff tint on add/del
+ * rows — together they read as one continuous gutter band, with the
+ * separator-to-content border living on .dmark. */
 .drow > .dgutter {
   text-align: right;
   color: var(--text-dim);
@@ -1443,13 +1564,14 @@ table.prs tr.clickable:focus-within .row-external,
   position: relative;
   font-size: 11px;
   background: var(--panel);
-  border-right: 1px solid var(--border);
 }
 
 .drow > .dmark {
   text-align: center;
   color: var(--text-dim);
   user-select: none;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
 }
 
 .drow > .dcontent {
@@ -1467,27 +1589,31 @@ table.prs tr.clickable:focus-within .row-external,
   display: inline !important;
 }
 
+/* `background: !important` here intentionally beats the hljs rule above,
+ * which sets `background: transparent !important` on .dcontent.hljs to
+ * neutralize the github-* theme's own surface color. Our diff tint is the
+ * deliberate override of that. Both rules must be !important to play. */
 .drow-add > .dcontent,
 .drow-add > .dmark {
-  background: rgba(74, 222, 128, 0.12);
-  color: #b9f0c8;
+  background: var(--diff-add-bg) !important;
+  color: var(--diff-add-text);
 }
 
 .drow-add > .dgutter {
-  background: rgba(74, 222, 128, 0.08);
+  background: var(--diff-add-gutter);
 }
 
 .drow-del > .dcontent,
 .drow-del > .dmark {
-  background: rgba(248, 113, 113, 0.12);
-  color: #fbc4c4;
+  background: var(--diff-del-bg) !important;
+  color: var(--diff-del-text);
 }
 
 .drow-del > .dgutter {
-  background: rgba(248, 113, 113, 0.08);
+  background: var(--diff-del-gutter);
 }
 
-.drow:hover > .dgutter.old .add-comment-btn {
+.drow:hover > .dgutter .add-comment-btn {
   display: block;
 }
 
@@ -1564,7 +1690,7 @@ table.prs tr.clickable:focus-within .row-external,
 }
 
 .expand-edge:hover:not(:disabled) {
-  background: rgba(91, 141, 239, 0.12);
+  background: rgba(var(--accent-rgb), 0.12);
   color: var(--accent);
 }
 
@@ -1602,7 +1728,7 @@ table.prs tr.clickable:focus-within .row-external,
 }
 
 .expand-band:hover:not(:disabled) {
-  background: rgba(91, 141, 239, 0.1);
+  background: rgba(var(--accent-rgb), 0.1);
   color: var(--accent);
 }
 
@@ -1635,16 +1761,16 @@ table.prs tr.clickable:focus-within .row-external,
 
 /* Native macOS button gradient looks out of place on the flat band. Strip
  * it for the edge + band buttons specifically. */
-.platform-darwin .expand-edge,
-.platform-darwin .expand-band {
+.platform-darwin[data-theme='dark'] .expand-edge,
+.platform-darwin[data-theme='dark'] .expand-band {
   background: transparent;
   border-color: var(--border);
   box-shadow: none;
 }
 
-.platform-darwin .expand-edge:hover:not(:disabled),
-.platform-darwin .expand-band:hover:not(:disabled) {
-  background: rgba(91, 141, 239, 0.14);
+.platform-darwin[data-theme='dark'] .expand-edge:hover:not(:disabled),
+.platform-darwin[data-theme='dark'] .expand-band:hover:not(:disabled) {
+  background: rgba(var(--accent-rgb), 0.14);
   border-color: var(--border);
 }
 
@@ -1829,7 +1955,7 @@ table.prs tr.clickable:focus-within .row-external,
 }
 
 .comment-delete:hover:not(:disabled) {
-  background: rgba(248, 113, 113, 0.14);
+  background: rgba(var(--bad-rgb), 0.14);
   color: var(--bad);
 }
 
@@ -1937,7 +2063,7 @@ table.prs tr.clickable {
 }
 
 .sidebar-tab:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--panel-2);
   color: var(--text);
   border-color: var(--border);
 }
@@ -1993,8 +2119,8 @@ table.prs tr.clickable {
 
 .commit-item.active {
   background: var(--accent-fade);
-  border-color: rgba(91, 141, 239, 0.32);
-  box-shadow: inset 0 0 0 1px rgba(91, 141, 239, 0.1);
+  border-color: rgba(var(--accent-rgb), 0.32);
+  box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), 0.1);
 }
 
 /* SHA chip behaves as a button (click-to-copy). Matches the rest of the
@@ -2024,7 +2150,7 @@ table.prs tr.clickable {
 
 .commit-sha-chip.is-copied {
   color: var(--ok);
-  border-color: rgba(74, 222, 128, 0.4);
+  border-color: rgba(var(--ok-rgb), 0.4);
 }
 
 .commit-item-main {
@@ -2102,7 +2228,7 @@ table.prs tr.clickable {
 .commit-banner-back:hover:not(:disabled) {
   border-color: var(--accent);
   color: var(--accent);
-  background: rgba(91, 141, 239, 0.08);
+  background: rgba(var(--accent-rgb), 0.08);
 }
 
 .commit-banner-sha {
@@ -2124,15 +2250,15 @@ table.prs tr.clickable {
   flex: 1;
 }
 
-.platform-darwin .file-sidebar-tabs {
-  background: rgba(24, 29, 38, 0.4);
+.platform-darwin[data-theme='dark'] .file-sidebar-tabs {
+  background: rgba(16, 16, 22, 0.4);
   -webkit-backdrop-filter: blur(26px) saturate(1.45);
   backdrop-filter: blur(26px) saturate(1.45);
-  border-bottom-color: rgba(160, 176, 205, 0.14);
+  border-bottom-color: rgba(160, 176, 205, 0.1);
 }
 
-.platform-darwin .commit-banner {
-  background: rgba(22, 26, 34, 0.72);
+.platform-darwin[data-theme='dark'] .commit-banner {
+  background: rgba(18, 18, 26, 0.72);
   -webkit-backdrop-filter: blur(22px) saturate(1.35);
   backdrop-filter: blur(22px) saturate(1.35);
 }
@@ -2229,110 +2355,167 @@ table.prs tr.clickable {
 
 /* ---- Platform polish -------------------------------------------------- */
 
-.platform-darwin {
-  --bg: #101218;
-  --panel: rgba(22, 26, 34, 0.76);
-  --panel-2: rgba(30, 36, 49, 0.82);
-  --border: rgba(126, 146, 178, 0.22);
-  --control: rgba(45, 53, 69, 0.72);
-  --control-hover: rgba(55, 65, 84, 0.78);
-  --control-active: rgba(32, 39, 52, 0.84);
-  --accent-fade: rgba(91, 141, 239, 0.2);
-  --focus-ring: rgba(94, 148, 255, 0.28);
-}
-
+/* macOS layout adjustments that apply in BOTH themes — the traffic-light
+ * inset and transparent root are layout, not theming. */
 .platform-darwin body,
 .platform-darwin #root {
   background: transparent;
-}
-
-.platform-darwin .app,
-.platform-darwin .pr-detail {
-  background: rgba(16, 18, 24, 0.88);
 }
 
 .platform-darwin .topbar,
 .platform-darwin .pr-toolbar {
   min-height: 48px;
   padding-left: 86px;
-  background: rgba(22, 26, 34, 0.58);
-  -webkit-backdrop-filter: blur(28px) saturate(1.45);
-  backdrop-filter: blur(28px) saturate(1.45);
-  border-bottom-color: rgba(160, 176, 205, 0.18);
 }
 
 .platform-darwin .topbar .brand {
   letter-spacing: 0;
 }
 
-.platform-darwin .summary {
-  color: rgba(200, 209, 226, 0.62);
+.platform-darwin[data-theme='dark'] {
+  --bg: #050505;
+  --panel: rgba(22, 22, 22, 0.78);
+  --panel-2: rgba(30, 30, 30, 0.82);
+  --border: rgba(142, 142, 142, 0.2);
+  --control: rgba(36, 36, 36, 0.72);
+  --control-hover: rgba(50, 50, 50, 0.78);
+  --control-active: rgba(22, 22, 22, 0.84);
+  --accent-fade: rgba(var(--accent-rgb), 0.22);
+  --focus-ring: rgba(var(--accent-rgb), 0.32);
 }
 
-.platform-darwin .settings-panel,
-.platform-darwin .filters,
-.platform-darwin .pr-meta,
-.platform-darwin .file-section-head {
-  background: rgba(22, 26, 34, 0.72);
+/* macOS light vibrancy: same posture as dark, calibrated for a white surface.
+ * Quieter than the dark version since light vibrancy reads as a tint rather
+ * than depth. */
+.platform-darwin[data-theme='light'] {
+  --panel: rgba(246, 248, 250, 0.78);
+  --panel-2: rgba(234, 238, 242, 0.82);
+  --border: rgba(31, 35, 40, 0.16);
+  --control: rgba(246, 248, 250, 0.84);
+  --control-hover: rgba(234, 238, 242, 0.9);
+  --control-active: rgba(208, 215, 222, 0.92);
+}
+
+.platform-darwin[data-theme='light'] .app,
+.platform-darwin[data-theme='light'] .pr-detail {
+  background: rgba(255, 255, 255, 0.84);
+}
+
+.platform-darwin[data-theme='light'] .topbar,
+.platform-darwin[data-theme='light'] .pr-toolbar {
+  background: rgba(246, 248, 250, 0.68);
+  -webkit-backdrop-filter: blur(28px) saturate(1.4);
+  backdrop-filter: blur(28px) saturate(1.4);
+  border-bottom-color: rgba(31, 35, 40, 0.12);
+}
+
+.platform-darwin[data-theme='light'] .settings-panel,
+.platform-darwin[data-theme='light'] .filters,
+.platform-darwin[data-theme='light'] .pr-meta,
+.platform-darwin[data-theme='light'] .file-section-head,
+.platform-darwin[data-theme='light'] table.prs th {
+  background: rgba(246, 248, 250, 0.82);
   -webkit-backdrop-filter: blur(22px) saturate(1.35);
   backdrop-filter: blur(22px) saturate(1.35);
 }
 
-.platform-darwin table.prs th {
-  background: rgba(22, 26, 34, 0.78);
+.platform-darwin[data-theme='light'] .file-sidebar {
+  background: rgba(246, 248, 250, 0.68);
+  -webkit-backdrop-filter: blur(34px) saturate(1.4);
+  backdrop-filter: blur(34px) saturate(1.4);
+  border-right-color: rgba(31, 35, 40, 0.12);
+}
+
+.platform-darwin[data-theme='light'] .file-section,
+.platform-darwin[data-theme='light'] .inline-composer,
+.platform-darwin[data-theme='light'] .inline-thread,
+.platform-darwin[data-theme='light'] .thread-flat,
+.platform-darwin[data-theme='light'] .reply-box,
+.platform-darwin[data-theme='light'] .composer {
+  box-shadow: 0 8px 22px rgba(31, 35, 40, 0.08);
+}
+
+.platform-darwin[data-theme='dark'] .app,
+.platform-darwin[data-theme='dark'] .pr-detail {
+  background: rgba(10, 10, 10, 0.88);
+}
+
+.platform-darwin[data-theme='dark'] .topbar,
+.platform-darwin[data-theme='dark'] .pr-toolbar {
+  background: rgba(14, 14, 14, 0.58);
+  -webkit-backdrop-filter: blur(28px) saturate(1.45);
+  backdrop-filter: blur(28px) saturate(1.45);
+  border-bottom-color: rgba(142, 142, 142, 0.14);
+}
+
+.platform-darwin[data-theme='dark'] .summary {
+  color: rgba(216, 216, 216, 0.62);
+}
+
+.platform-darwin[data-theme='dark'] .settings-panel,
+.platform-darwin[data-theme='dark'] .filters,
+.platform-darwin[data-theme='dark'] .pr-meta,
+.platform-darwin[data-theme='dark'] .file-section-head {
+  background: rgba(20, 20, 20, 0.72);
   -webkit-backdrop-filter: blur(22px) saturate(1.35);
   backdrop-filter: blur(22px) saturate(1.35);
 }
 
-.platform-darwin table.prs tbody tr:hover {
+.platform-darwin[data-theme='dark'] table.prs th {
+  background: rgba(20, 20, 20, 0.78);
+  -webkit-backdrop-filter: blur(22px) saturate(1.35);
+  backdrop-filter: blur(22px) saturate(1.35);
+}
+
+.platform-darwin[data-theme='dark'] table.prs tbody tr:hover {
   background: rgba(255, 255, 255, 0.045);
 }
 
-.platform-darwin table.prs tbody tr:focus-visible,
-.platform-darwin table.prs th:focus-visible {
+.platform-darwin[data-theme='dark'] table.prs tbody tr:focus-visible,
+.platform-darwin[data-theme='dark'] table.prs th:focus-visible {
   background: rgba(255, 255, 255, 0.08);
   box-shadow: inset 0 0 0 2px var(--focus-ring);
 }
 
-.platform-darwin .file-sidebar {
-  background: rgba(24, 29, 38, 0.56);
+.platform-darwin[data-theme='dark'] .file-sidebar {
+  background: rgba(16, 16, 16, 0.6);
   -webkit-backdrop-filter: blur(34px) saturate(1.5);
   backdrop-filter: blur(34px) saturate(1.5);
-  border-right-color: rgba(160, 176, 205, 0.16);
+  border-right-color: rgba(142, 142, 142, 0.14);
 }
 
-.platform-darwin .file-sidebar-head {
-  background: rgba(24, 29, 38, 0.4);
+.platform-darwin[data-theme='dark'] .file-sidebar-head {
+  background: rgba(16, 16, 16, 0.4);
   -webkit-backdrop-filter: blur(26px) saturate(1.45);
   backdrop-filter: blur(26px) saturate(1.45);
-  border-bottom-color: rgba(160, 176, 205, 0.14);
+  border-bottom-color: rgba(142, 142, 142, 0.1);
 }
 
-.platform-darwin .seg {
-  background: rgba(12, 15, 21, 0.38);
-  border-color: rgba(160, 176, 205, 0.18);
+.platform-darwin[data-theme='dark'] .seg {
+  background: rgba(8, 8, 8, 0.5);
+  border-color: rgba(142, 142, 142, 0.18);
   border-radius: 8px;
   padding: 2px;
 }
 
-.platform-darwin .seg-btn {
+.platform-darwin[data-theme='dark'] .seg-btn {
   min-height: 24px;
   background: transparent;
   border-radius: 6px;
-  color: rgba(205, 214, 232, 0.62);
+  color: rgba(216, 216, 216, 0.62);
   box-shadow: none;
 }
 
-.platform-darwin .seg-btn + .seg-btn {
+.platform-darwin[data-theme='dark'] .seg-btn + .seg-btn {
   border-left: none;
 }
 
-.platform-darwin .seg-btn:hover:not(:disabled) {
+.platform-darwin[data-theme='dark'] .seg-btn:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.045);
   border-color: transparent;
 }
 
-.platform-darwin .seg-btn.active {
+.platform-darwin[data-theme='dark'] .seg-btn.active {
   background: rgba(255, 255, 255, 0.1);
   color: var(--text);
   box-shadow:
@@ -2340,108 +2523,136 @@ table.prs tr.clickable {
     0 1px 2px rgba(0, 0, 0, 0.2);
 }
 
-.platform-darwin button {
+.platform-darwin[data-theme='dark'] button {
   background:
     linear-gradient(rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.012)),
     var(--control);
-  border-color: rgba(170, 188, 220, 0.22);
+  border-color: rgba(142, 142, 142, 0.24);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.09),
     0 1px 1px rgba(0, 0, 0, 0.2);
 }
 
-.platform-darwin button:hover:not(:disabled) {
+.platform-darwin[data-theme='dark'] button:hover:not(:disabled) {
   background:
     linear-gradient(rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.02)),
     var(--control-hover);
-  border-color: rgba(127, 166, 255, 0.48);
+  border-color: rgba(var(--accent-rgb), 0.48);
 }
 
-.platform-darwin button.primary {
+.platform-darwin[data-theme='dark'] button.primary {
   background:
     linear-gradient(rgba(255, 255, 255, 0.2), rgba(255, 255, 255, 0.025)),
-    rgba(86, 135, 231, 0.94);
-  border-color: rgba(134, 173, 255, 0.56);
+    rgba(var(--accent-rgb), 0.94);
+  border-color: rgba(var(--accent-rgb), 0.56);
 }
 
-.platform-darwin input,
-.platform-darwin select,
-.platform-darwin textarea {
-  background: rgba(12, 15, 21, 0.46);
-  border-color: rgba(160, 176, 205, 0.22);
+.platform-darwin[data-theme='dark'] input,
+.platform-darwin[data-theme='dark'] select,
+.platform-darwin[data-theme='dark'] textarea {
+  background: rgba(8, 8, 8, 0.46);
+  border-color: rgba(142, 142, 142, 0.22);
   box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.22);
 }
 
-.platform-darwin input::placeholder,
-.platform-darwin textarea::placeholder {
-  color: rgba(194, 204, 224, 0.46);
+.platform-darwin[data-theme='dark'] input::placeholder,
+.platform-darwin[data-theme='dark'] textarea::placeholder {
+  color: rgba(216, 216, 216, 0.46);
 }
 
-.platform-darwin .badge,
-.platform-darwin .ct,
-.platform-darwin .badge-count {
+.platform-darwin[data-theme='dark'] .badge,
+.platform-darwin[data-theme='dark'] .ct,
+.platform-darwin[data-theme='dark'] .badge-count {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
-.platform-darwin .file-sidebar li {
-  color: rgba(232, 236, 245, 0.86);
+.platform-darwin[data-theme='dark'] .file-sidebar li {
+  color: rgba(255, 255, 255, 0.86);
 }
 
-.platform-darwin .file-sidebar li:hover {
+.platform-darwin[data-theme='dark'] .file-sidebar li:hover {
   background: rgba(255, 255, 255, 0.06);
 }
 
-.platform-darwin .file-sidebar li.active {
-  background: rgba(91, 141, 239, 0.22);
-  border-color: rgba(128, 169, 255, 0.3);
+.platform-darwin[data-theme='dark'] .file-sidebar li.active {
+  background: rgba(var(--accent-rgb), 0.22);
+  border-color: rgba(var(--accent-rgb), 0.3);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.05),
     0 1px 2px rgba(0, 0, 0, 0.16);
 }
 
-.platform-darwin .file-section,
-.platform-darwin .inline-composer,
-.platform-darwin .inline-thread,
-.platform-darwin .thread-flat,
-.platform-darwin .reply-box,
-.platform-darwin .composer {
-  border-color: rgba(160, 176, 205, 0.2);
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.16);
+.platform-darwin[data-theme='dark'] .file-section,
+.platform-darwin[data-theme='dark'] .inline-composer,
+.platform-darwin[data-theme='dark'] .inline-thread,
+.platform-darwin[data-theme='dark'] .thread-flat,
+.platform-darwin[data-theme='dark'] .reply-box,
+.platform-darwin[data-theme='dark'] .composer {
+  border-color: rgba(142, 142, 142, 0.2);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.32);
 }
 
-.platform-win32 {
-  --control: #202636;
-  --control-hover: #273044;
-  --control-active: #1a2030;
+.platform-win32[data-theme='dark'] {
+  --control: #1f1f1f;
+  --control-hover: #2a2a2a;
+  --control-active: #151515;
 }
 
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .platform-darwin .topbar,
-  .platform-darwin .pr-toolbar,
-  .platform-darwin .settings-panel,
-  .platform-darwin .filters,
-  .platform-darwin .pr-meta,
-  .platform-darwin .file-sidebar,
-  .platform-darwin .file-sidebar-head,
-  .platform-darwin .file-section-head,
-  .platform-darwin table.prs th {
-    background: rgba(22, 26, 34, 0.96);
+  .platform-darwin[data-theme='dark'] .topbar,
+  .platform-darwin[data-theme='dark'] .pr-toolbar,
+  .platform-darwin[data-theme='dark'] .settings-panel,
+  .platform-darwin[data-theme='dark'] .filters,
+  .platform-darwin[data-theme='dark'] .pr-meta,
+  .platform-darwin[data-theme='dark'] .file-sidebar,
+  .platform-darwin[data-theme='dark'] .file-sidebar-head,
+  .platform-darwin[data-theme='dark'] .file-section-head,
+  .platform-darwin[data-theme='dark'] table.prs th {
+    background: #181818;
+  }
+
+  .platform-darwin[data-theme='light'] .topbar,
+  .platform-darwin[data-theme='light'] .pr-toolbar,
+  .platform-darwin[data-theme='light'] .settings-panel,
+  .platform-darwin[data-theme='light'] .filters,
+  .platform-darwin[data-theme='light'] .pr-meta,
+  .platform-darwin[data-theme='light'] .file-sidebar,
+  .platform-darwin[data-theme='light'] .file-sidebar-head,
+  .platform-darwin[data-theme='light'] .file-section-head,
+  .platform-darwin[data-theme='light'] table.prs th {
+    background: #f6f8fa;
   }
 }
 
 @media (prefers-reduced-transparency: reduce) {
-  .platform-darwin .app,
-  .platform-darwin .pr-detail,
-  .platform-darwin .topbar,
-  .platform-darwin .pr-toolbar,
-  .platform-darwin .settings-panel,
-  .platform-darwin .filters,
-  .platform-darwin .pr-meta,
-  .platform-darwin .file-sidebar,
-  .platform-darwin .file-sidebar-head,
-  .platform-darwin .file-section-head,
-  .platform-darwin table.prs th {
-    background: #161a22;
+  .platform-darwin[data-theme='dark'] .app,
+  .platform-darwin[data-theme='dark'] .pr-detail,
+  .platform-darwin[data-theme='dark'] .topbar,
+  .platform-darwin[data-theme='dark'] .pr-toolbar,
+  .platform-darwin[data-theme='dark'] .settings-panel,
+  .platform-darwin[data-theme='dark'] .filters,
+  .platform-darwin[data-theme='dark'] .pr-meta,
+  .platform-darwin[data-theme='dark'] .file-sidebar,
+  .platform-darwin[data-theme='dark'] .file-sidebar-head,
+  .platform-darwin[data-theme='dark'] .file-section-head,
+  .platform-darwin[data-theme='dark'] table.prs th {
+    background: #181818;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+
+  .platform-darwin[data-theme='light'] .app,
+  .platform-darwin[data-theme='light'] .pr-detail,
+  .platform-darwin[data-theme='light'] .topbar,
+  .platform-darwin[data-theme='light'] .pr-toolbar,
+  .platform-darwin[data-theme='light'] .settings-panel,
+  .platform-darwin[data-theme='light'] .filters,
+  .platform-darwin[data-theme='light'] .pr-meta,
+  .platform-darwin[data-theme='light'] .file-sidebar,
+  .platform-darwin[data-theme='light'] .file-sidebar-head,
+  .platform-darwin[data-theme='light'] .file-section-head,
+  .platform-darwin[data-theme='light'] table.prs th {
+    background: #f6f8fa;
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
   }
@@ -2449,12 +2660,18 @@ table.prs tr.clickable {
   /* The macOS ambient card shadow only earns its keep when the surfaces it
    * lifts are translucent. Once vibrancy is off, the same shadow on an opaque
    * dark panel reads as the brand-banned "shadow on dark." Drop it. */
-  .platform-darwin .file-section,
-  .platform-darwin .inline-composer,
-  .platform-darwin .inline-thread,
-  .platform-darwin .thread-flat,
-  .platform-darwin .reply-box,
-  .platform-darwin .composer {
+  .platform-darwin[data-theme='dark'] .file-section,
+  .platform-darwin[data-theme='dark'] .inline-composer,
+  .platform-darwin[data-theme='dark'] .inline-thread,
+  .platform-darwin[data-theme='dark'] .thread-flat,
+  .platform-darwin[data-theme='dark'] .reply-box,
+  .platform-darwin[data-theme='dark'] .composer,
+  .platform-darwin[data-theme='light'] .file-section,
+  .platform-darwin[data-theme='light'] .inline-composer,
+  .platform-darwin[data-theme='light'] .inline-thread,
+  .platform-darwin[data-theme='light'] .thread-flat,
+  .platform-darwin[data-theme='light'] .reply-box,
+  .platform-darwin[data-theme='light'] .composer {
     box-shadow: none;
   }
 }

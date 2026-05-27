@@ -5,6 +5,7 @@ import {
   type AwsProfileInfo,
   type CredentialSource,
   type RepositorySummary,
+  type ThemePreference,
 } from '@shared/types';
 import { api, IpcError, unwrap } from '../api';
 import { maskKey, parseEnvBlock } from '../parseEnvBlock';
@@ -86,6 +87,21 @@ export function Settings({
 
   return (
     <div className="settings-panel">
+      <section className="row">
+        <h3>Appearance</h3>
+        <div className="seg">
+          {(['light', 'dark', 'system'] as ThemePreference[]).map((t) => (
+            <SegButton
+              key={t}
+              active={settings.themePreference === t}
+              onClick={() => update('themePreference', t)}
+            >
+              {t === 'light' ? 'Light' : t === 'dark' ? 'Dark' : 'System'}
+            </SegButton>
+          ))}
+        </div>
+      </section>
+
       <section className="row">
         <h3>Credentials</h3>
         <div className="seg">

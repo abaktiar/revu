@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AppSettings, PullRequestSummary } from '@shared/types';
 import { api, IpcError, unwrap } from './api';
+import { setThemePreference } from './theme';
 import { Settings } from './components/Settings';
 import {
   PRFilters,
@@ -65,10 +66,18 @@ export function App(): JSX.Element {
     unwrap(api.settings.get())
       .then((s) => {
         setSettings(s);
+        setThemePreference(s.themePreference);
         if (!isReadyToFetch(s)) setSettingsOpen(true);
       })
       .catch((err: unknown) => setError(err));
   }, []);
+
+  // Re-apply theme whenever settings change. This is what makes the picker in
+  // Settings flip the UI: persistSettings calls setSettings -> this effect runs
+  // -> theme module updates data-theme and the hljs stylesheet.
+  useEffect(() => {
+    if (settings) setThemePreference(settings.themePreference);
+  }, [settings?.themePreference]);
 
   // Subscribe to streaming events once on mount. Handlers gate on the active
   // sessionId so events from cancelled sessions (race: cancel sent, item
