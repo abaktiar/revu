@@ -1,4 +1,13 @@
-import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
+import {
+  Fragment,
+  memo,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import type {
   CommentDraft,
   CommentThread,
@@ -7,6 +16,7 @@ import type {
   FileDiffEntry,
 } from '@shared/types';
 import { api, unwrap } from '../../api';
+import { fileDiffSemaphore } from '../../concurrency';
 import {
   buildDraftIndex,
   buildThreadIndex,
@@ -17,11 +27,29 @@ import {
 import { HunkView } from './HunkView';
 import { ExpandGap } from './ExpandGap';
 
+// Files at or above this many total rendered lines (across all hunks) are
+// collapsed by default and need a click to render. Mirrors GitHub's "Large
+// diffs are not rendered by default" behavior — the dominant cost on big PRs
+// is the synchronous render+highlight, so the safest valve is to not render.
+const AUTO_COLLAPSE_LINES = 500;
+
+// Above this, even after the user expands we skip syntax highlighting and
+// just render escaped text. hljs is per-line and gets prohibitively slow
+// once you cross a few thousand rows.
+const SKIP_HIGHLIGHT_LINES = 1000;
+
+// Wait this long after a section becomes visible before deciding to load it.
+// Without a dwell time, a smooth scrollIntoView triggered by a sidebar click
+// briefly intersects every file in between, queueing fetches we don't want.
+const LOAD_DWELL_MS = 200;
+
 interface Props {
   entry: FileDiffEntry;
   threads: CommentThread[];
   drafts: CommentDraft[];
   reviewed: boolean;
+  // Already sliced by ContinuousDiff: null when the composer is closed OR
+  // open on a different file. We never receive another file's composer.
   composerAt: ComposerLocation | null;
   ctx: DiffContext;
   callbacks: DiffCallbacks;
@@ -31,7 +59,7 @@ interface Props {
   registerNode: (path: string, el: HTMLDivElement | null) => void;
 }
 
-export function FileDiffSection({
+function FileDiffSectionImpl({
   entry,
   threads,
   drafts,
@@ -48,8 +76,13 @@ export function FileDiffSection({
   const [error, setError] = useState<string | null>(null);
   const [hasLoaded, setHasLoaded] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
+  const [autoCollapsed, setAutoCollapsed] = useState(false);
   const [extraHunks, setExtraHunks] = useState<DiffHunk[]>([]);
   const sectionRef = useRef<HTMLDivElement | null>(null);
+
+  // Deferring the diff lets React commit the big subtree at a lower priority,
+  // so scroll/key input stays responsive while a large file is rendering.
+  const deferredDiff = useDeferredValue(diff);
 
   const onSectionRef = useCallback(
     (el: HTMLDivElement | null) => {
@@ -59,33 +92,72 @@ export function FileDiffSection({
     [entry.path, registerNode],
   );
 
-  // Lazy-load this file's diff the first time the section is near the viewport.
+  // Keep a ref-mirror of hasLoaded so the observer callback can read the
+  // current value without re-running the effect (which would tear down and
+  // rebuild the IntersectionObserver on every load).
+  const hasLoadedRef = useRef(hasLoaded);
+  useEffect(() => {
+    hasLoadedRef.current = hasLoaded;
+  }, [hasLoaded]);
+
+  // One stable IntersectionObserver per section. Two jobs:
+  //   1. Report visibility to the parent (drives active-file tracking).
+  //   2. Trigger a load when the section dwells in view long enough — a brief
+  //      scroll-through (e.g. a smooth scrollIntoView passing dozens of files
+  //      on the way to a sidebar-clicked target) must NOT queue fetches we
+  //      don't actually want, or we drown the renderer in pointless work.
   useEffect(() => {
     const el = sectionRef.current;
-    if (!el || hasLoaded) return;
+    if (!el) return;
+    let pendingLoad: ReturnType<typeof setTimeout> | null = null;
+    const cancelPending = (): void => {
+      if (pendingLoad !== null) {
+        clearTimeout(pendingLoad);
+        pendingLoad = null;
+      }
+    };
     const io = new IntersectionObserver(
       (entries) => {
         const visible = entries.some((e) => e.isIntersecting);
-        if (visible && !hasLoaded) {
-          setHasLoaded(true);
-        }
         onVisibilityChange(entry.path, visible);
+        if (visible) {
+          if (!hasLoadedRef.current && pendingLoad === null) {
+            pendingLoad = setTimeout(() => {
+              pendingLoad = null;
+              if (!hasLoadedRef.current) setHasLoaded(true);
+            }, LOAD_DWELL_MS);
+          }
+        } else {
+          cancelPending();
+        }
       },
-      // Pre-fetch when within one viewport of being scrolled into view.
-      { rootMargin: '600px 0px 600px 0px' },
+      // Smaller pre-fetch buffer — combined with the dwell timer, this means
+      // we only load files the user is actually looking at or stopping near.
+      { rootMargin: '200px 0px 200px 0px' },
     );
     io.observe(el);
-    return () => io.disconnect();
-  }, [hasLoaded, entry.path, onVisibilityChange]);
+    return () => {
+      cancelPending();
+      io.disconnect();
+    };
+  }, [entry.path, onVisibilityChange]);
 
-  // Fetch the file diff once we decide to load it.
+  // Fetch the file diff once we decide to load it. Runs through a renderer-
+  // wide semaphore so that scrolling fast into a large PR doesn't fire dozens
+  // of concurrent prs:file-diff IPCs (which each issue two GetBlob calls in
+  // main, saturating the event loop and AWS).
   useEffect(() => {
     if (!hasLoaded || diff || error) return;
     let cancelled = false;
-    unwrap(api.prs.fileDiff(ctx.repositoryName, entry))
+    fileDiffSemaphore
+      .acquire(() => unwrap(api.prs.fileDiff(ctx.repositoryName, entry)))
       .then((d) => {
         if (cancelled) return;
         setDiff(d);
+        if (totalDiffLines(d) >= AUTO_COLLAPSE_LINES) {
+          setCollapsed(true);
+          setAutoCollapsed(true);
+        }
       })
       .catch((e: Error) => {
         if (cancelled) return;
@@ -96,10 +168,40 @@ export function FileDiffSection({
     };
   }, [hasLoaded, diff, error, ctx.repositoryName, entry]);
 
-  const threadIndex = buildThreadIndex(threads);
-  const draftIndex = buildDraftIndex(drafts);
+  const threadIndex = useMemo(() => buildThreadIndex(threads), [threads]);
+  const draftIndex = useMemo(() => buildDraftIndex(drafts), [drafts]);
 
-  const allHunks = mergeHunks(diff?.hunks ?? [], extraHunks);
+  const renderDiff = deferredDiff ?? diff;
+  const allHunks = useMemo(
+    () => mergeHunks(renderDiff?.hunks ?? [], extraHunks),
+    [renderDiff, extraHunks],
+  );
+  const disableHighlight = useMemo(
+    () => (renderDiff ? totalDiffLines(renderDiff) >= SKIP_HIGHLIGHT_LINES : false),
+    [renderDiff],
+  );
+  const totalLines = renderDiff ? totalDiffLines(renderDiff) : 0;
+
+  // Which hunk (if any) contains the line the composer is open on. Computed
+  // once per render of this section so each HunkView gets a plain
+  // `composerAt | null` shallow-compare friendly prop — all hunks that don't
+  // own the composer see `null` both before and after a composer state change
+  // and the memoized HunkView skips re-rendering them.
+  const composerHunkIdx = useMemo(() => {
+    if (!composerAt) return -1;
+    for (let i = 0; i < allHunks.length; i++) {
+      const hunk = allHunks[i]!;
+      for (const l of hunk.lines) {
+        if (
+          composerAt.line === l.newLineNumber ||
+          composerAt.line === l.oldLineNumber
+        ) {
+          return i;
+        }
+      }
+    }
+    return -1;
+  }, [allHunks, composerAt]);
 
   function onInsertExpansion(synthetic: DiffHunk): void {
     setExtraHunks((cur) => [...cur, synthetic]);
@@ -114,7 +216,10 @@ export function FileDiffSection({
       <header className="file-section-head">
         <button
           className="file-collapse"
-          onClick={() => setCollapsed((c) => !c)}
+          onClick={() => {
+            setCollapsed((c) => !c);
+            setAutoCollapsed(false);
+          }}
           title={collapsed ? 'Expand file' : 'Collapse file'}
         >
           {collapsed ? '▶' : '▼'}
@@ -126,6 +231,11 @@ export function FileDiffSection({
           entry.beforePath !== entry.afterPath && (
             <span className="hint">← {entry.beforePath}</span>
           )}
+        {autoCollapsed && collapsed && totalLines > 0 && (
+          <span className="hint" title="Large diff — collapsed by default. Click ▶ to render.">
+            large diff ({totalLines.toLocaleString()} lines)
+          </span>
+        )}
         <span className="grow" />
         {threads.length > 0 && (
           <span className="hint">
@@ -151,13 +261,13 @@ export function FileDiffSection({
             <div className="hint" style={{ padding: 16 }}>
               Scroll to load…
             </div>
-          ) : !diff ? (
+          ) : !renderDiff ? (
             <div className="hint" style={{ padding: 16 }}>
               Loading diff…
             </div>
-          ) : diff.binary ? (
+          ) : renderDiff.binary ? (
             <div className="empty">Binary file — diff not rendered.</div>
-          ) : diff.hunks.length === 0 ? (
+          ) : renderDiff.hunks.length === 0 ? (
             <div className="empty">
               {entry.changeType === 'A'
                 ? 'Empty file added.'
@@ -189,9 +299,10 @@ export function FileDiffSection({
                       hunk={hunk}
                       threads={threadIndex}
                       drafts={draftIndex}
-                      composerAt={composerAt}
+                      composerAt={composerHunkIdx === idx ? composerAt : null}
                       ctx={ctx}
                       callbacks={callbacks}
+                      disableHighlight={disableHighlight}
                       onOpenComposer={onOpenComposer}
                       onCloseComposer={onCloseComposer}
                     />
@@ -202,8 +313,8 @@ export function FileDiffSection({
                         afterBlobId={entry.afterBlobId}
                         lastOldEnd={hunk.oldStart + hunk.oldLines - 1}
                         lastNewEnd={hunk.newStart + hunk.newLines - 1}
-                        oldTotal={diff.oldTotalLines}
-                        newTotal={diff.newTotalLines}
+                        oldTotal={renderDiff.oldTotalLines}
+                        newTotal={renderDiff.newTotalLines}
                         onInsert={onInsertExpansion}
                       />
                     )}
@@ -226,6 +337,19 @@ export function FileDiffSection({
       )}
     </section>
   );
+}
+
+// Memoized so unrelated PRDetail state updates (active file change during
+// scroll, posting state flips, etc.) don't cause every mounted section to
+// re-render. With ContinuousDiff already passing stable `ctx`, `callbacks`,
+// `onOpenComposer`, `onCloseComposer`, `onVisibilityChange`, and `registerNode`,
+// plus a per-file `composerAt` slice, the default shallow compare is enough.
+export const FileDiffSection = memo(FileDiffSectionImpl);
+
+function totalDiffLines(d: FileDiff): number {
+  let total = 0;
+  for (const h of d.hunks) total += h.lines.length;
+  return total;
 }
 
 function DiffGrid({ children }: { children: React.ReactNode }): JSX.Element {

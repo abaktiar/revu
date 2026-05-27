@@ -49,7 +49,15 @@ const CH = {
   mergeabilityGet: 'mergeability:get',
   reviewedList: 'reviewed:list',
   reviewedToggle: 'reviewed:toggle',
+  cacheInvalidatePr: 'cache:invalidate-pr',
+  cacheInvalidateRepo: 'cache:invalidate-repo',
+  cacheClearAll: 'cache:clear-all',
 } as const;
+
+// Pass-through type for read calls so the renderer can opt out of cache.
+export interface ReadOpts {
+  forceFresh?: boolean;
+}
 
 const api = {
   settings: {
@@ -69,25 +77,33 @@ const api = {
       ipcRenderer.invoke(CH.awsListProfiles),
   },
   repos: {
-    list: (): Promise<IpcResult<RepositorySummary[]>> =>
-      ipcRenderer.invoke(CH.reposList),
+    list: (opts?: ReadOpts): Promise<IpcResult<RepositorySummary[]>> =>
+      ipcRenderer.invoke(CH.reposList, opts),
   },
   prs: {
     list: (
       repositoryName: string,
       filter: ListPRsFilter,
+      opts?: ReadOpts,
     ): Promise<IpcResult<PullRequestSummary[]>> =>
-      ipcRenderer.invoke(CH.prsList, repositoryName, filter),
+      ipcRenderer.invoke(CH.prsList, repositoryName, filter, opts),
     get: (
       repositoryName: string,
       pullRequestId: string,
+      opts?: ReadOpts,
     ): Promise<IpcResult<PullRequestDetail>> =>
-      ipcRenderer.invoke(CH.prsGet, repositoryName, pullRequestId),
+      ipcRenderer.invoke(CH.prsGet, repositoryName, pullRequestId, opts),
     differences: (
       repositoryName: string,
       pullRequestId: string,
+      opts?: ReadOpts,
     ): Promise<IpcResult<PRDifferences>> =>
-      ipcRenderer.invoke(CH.prsDifferences, repositoryName, pullRequestId),
+      ipcRenderer.invoke(
+        CH.prsDifferences,
+        repositoryName,
+        pullRequestId,
+        opts,
+      ),
     filePair: (
       repositoryName: string,
       beforeBlobId: string | undefined,
@@ -97,8 +113,9 @@ const api = {
     fileDiff: (
       repositoryName: string,
       entry: FileDiffEntry,
+      opts?: ReadOpts,
     ): Promise<IpcResult<FileDiff>> =>
-      ipcRenderer.invoke(CH.prsFileDiff, repositoryName, entry),
+      ipcRenderer.invoke(CH.prsFileDiff, repositoryName, entry, opts),
     expandLines: (
       request: ExpandLinesRequest,
     ): Promise<IpcResult<ExpandLinesResponse>> =>
@@ -108,8 +125,9 @@ const api = {
     list: (
       repositoryName: string,
       pullRequestId: string,
+      opts?: ReadOpts,
     ): Promise<IpcResult<CommentThread[]>> =>
-      ipcRenderer.invoke(CH.commentsList, repositoryName, pullRequestId),
+      ipcRenderer.invoke(CH.commentsList, repositoryName, pullRequestId, opts),
     post: (input: PostCommentInput): Promise<IpcResult<CommentThread>> =>
       ipcRenderer.invoke(CH.commentsPost, input),
     reply: (input: PostReplyInput): Promise<IpcResult<CommentThread>> =>
@@ -136,8 +154,9 @@ const api = {
     get: (
       repositoryName: string,
       pullRequestId: string,
+      opts?: ReadOpts,
     ): Promise<IpcResult<PullRequestApprovalView>> =>
-      ipcRenderer.invoke(CH.approvalGet, repositoryName, pullRequestId),
+      ipcRenderer.invoke(CH.approvalGet, repositoryName, pullRequestId, opts),
     update: (
       repositoryName: string,
       pullRequestId: string,
@@ -149,8 +168,25 @@ const api = {
     get: (
       repositoryName: string,
       pullRequestId: string,
+      opts?: ReadOpts,
     ): Promise<IpcResult<PullRequestMergeability>> =>
-      ipcRenderer.invoke(CH.mergeabilityGet, repositoryName, pullRequestId),
+      ipcRenderer.invoke(
+        CH.mergeabilityGet,
+        repositoryName,
+        pullRequestId,
+        opts,
+      ),
+  },
+  cache: {
+    invalidatePr: (
+      repositoryName: string,
+      pullRequestId: string,
+    ): Promise<IpcResult<void>> =>
+      ipcRenderer.invoke(CH.cacheInvalidatePr, repositoryName, pullRequestId),
+    invalidateRepo: (repositoryName: string): Promise<IpcResult<void>> =>
+      ipcRenderer.invoke(CH.cacheInvalidateRepo, repositoryName),
+    clearAll: (): Promise<IpcResult<void>> =>
+      ipcRenderer.invoke(CH.cacheClearAll),
   },
   reviewed: {
     list: (pullRequestId: string): Promise<IpcResult<ReviewedFile[]>> =>

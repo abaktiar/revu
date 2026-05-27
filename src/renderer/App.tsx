@@ -57,28 +57,44 @@ export function App(): JSX.Element {
     }
   }, []);
 
-  const refresh = useCallback(async () => {
-    if (!settings || !isReadyToFetch(settings)) {
-      setError('Finish configuring credentials, region, and repository above.');
-      setSettingsOpen(true);
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    try {
-      const list = await unwrap(
-        api.prs.list(settings.repositoryName!, {
-          status: statusForApi(filters.status),
-        }),
-      );
-      setPrs(list);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      setPrs([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [settings, filters.status]);
+  // Two entry points: the initial load (which is happy with a cache hit) and
+  // the explicit Refresh button (which bypasses the cache). The button calls
+  // refresh(true); the initial path passes nothing so it stays cheap.
+  const refresh = useCallback(
+    async (forceFresh = false): Promise<void> => {
+      if (!settings || !isReadyToFetch(settings)) {
+        setError(
+          'Finish configuring credentials, region, and repository above.',
+        );
+        setSettingsOpen(true);
+        return;
+      }
+      setLoading(true);
+      setError(null);
+      try {
+        if (forceFresh) {
+          // Wipe per-PR and list caches for this repo so the next read goes
+          // to AWS. Doing this in main keeps the cache state consistent with
+          // what the renderer is about to fetch.
+          await unwrap(api.cache.invalidateRepo(settings.repositoryName!));
+        }
+        const list = await unwrap(
+          api.prs.list(
+            settings.repositoryName!,
+            { status: statusForApi(filters.status) },
+            { forceFresh },
+          ),
+        );
+        setPrs(list);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+        setPrs([]);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [settings, filters.status],
+  );
 
   const visible = useMemo(
     () => applyClientFilters(prs, filters),
@@ -121,7 +137,7 @@ export function App(): JSX.Element {
       <PRFilters
         value={filters}
         onChange={setFilters}
-        onRefresh={() => void refresh()}
+        onRefresh={() => void refresh(true)}
         busy={loading}
       />
       <div className="list-wrap">

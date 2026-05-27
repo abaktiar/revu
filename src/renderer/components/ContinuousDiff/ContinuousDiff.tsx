@@ -34,6 +34,11 @@ export interface ContinuousDiffHandle {
   scrollToFileBy: (offset: number) => void;
 }
 
+// Stable empty refs so memoized children that get an "I have no threads/drafts
+// for this file" array don't see a new [] each render.
+const EMPTY_THREADS: CommentThread[] = [];
+const EMPTY_DRAFTS: CommentDraft[] = [];
+
 export const ContinuousDiff = forwardRef<ContinuousDiffHandle, Props>(
   function ContinuousDiff(
     {
@@ -51,24 +56,76 @@ export const ContinuousDiff = forwardRef<ContinuousDiffHandle, Props>(
     const nodesRef = useRef<Map<string, HTMLDivElement>>(new Map());
     const visibleRef = useRef<Set<string>>(new Set());
     const orderRef = useRef<string[]>([]);
+    // Remember the last active path we reported so we only call up to the
+    // parent when it actually changes. The IntersectionObserver fires many
+    // times per second during scroll; without this guard, every flip caused
+    // setActiveFile in PRDetail → re-render of PRDetail → re-render of every
+    // mounted FileDiffSection. That was the dominant scroll-time cost.
+    const lastActiveRef = useRef<string | null>(null);
 
-    orderRef.current = files.map((f) => f.path);
+    // Keep orderRef in sync with the files array. Done in an effect, not
+    // during render, so concurrent renders don't observe a half-written ref.
+    useEffect(() => {
+      orderRef.current = files.map((f) => f.path);
+    }, [files]);
 
-    const registerNode = useCallback((path: string, el: HTMLDivElement | null) => {
-      if (el) nodesRef.current.set(path, el);
-      else nodesRef.current.delete(path);
+    const registerNode = useCallback(
+      (path: string, el: HTMLDivElement | null) => {
+        if (el) nodesRef.current.set(path, el);
+        else nodesRef.current.delete(path);
+      },
+      [],
+    );
+
+    // rAF-coalesced visibility recompute. Many sections can flip visibility in
+    // the same scroll frame; we used to run a linear `.find()` per flip and
+    // possibly call setActiveFile up-tree, which kicks off a render. Now we
+    // schedule at most one recompute per animation frame, which means at most
+    // one parent re-render per frame regardless of how many sections crossed
+    // the viewport edge in that frame.
+    const rafPendingRef = useRef<number | null>(null);
+    const onActiveFileChangeRef = useRef(onActiveFileChange);
+    useEffect(() => {
+      onActiveFileChangeRef.current = onActiveFileChange;
+    }, [onActiveFileChange]);
+
+    const scheduleActiveRecompute = useCallback((): void => {
+      if (rafPendingRef.current !== null) return;
+      rafPendingRef.current = requestAnimationFrame(() => {
+        rafPendingRef.current = null;
+        const ordered = orderRef.current;
+        // Topmost file currently visible. Linear scan — files are an array of
+        // paths so this is O(N) worst case, but only once per frame.
+        let active: string | null = null;
+        for (const p of ordered) {
+          if (visibleRef.current.has(p)) {
+            active = p;
+            break;
+          }
+        }
+        if (active !== lastActiveRef.current) {
+          lastActiveRef.current = active;
+          onActiveFileChangeRef.current(active);
+        }
+      });
+    }, []);
+
+    useEffect(() => {
+      return () => {
+        if (rafPendingRef.current !== null) {
+          cancelAnimationFrame(rafPendingRef.current);
+          rafPendingRef.current = null;
+        }
+      };
     }, []);
 
     const onVisibilityChange = useCallback(
       (path: string, visible: boolean) => {
         if (visible) visibleRef.current.add(path);
         else visibleRef.current.delete(path);
-        // Active = topmost file currently visible.
-        const ordered = orderRef.current;
-        const active = ordered.find((p) => visibleRef.current.has(p)) ?? null;
-        onActiveFileChange(active);
+        scheduleActiveRecompute();
       },
-      [onActiveFileChange],
+      [scheduleActiveRecompute],
     );
 
     // Threads / drafts grouped by file path for O(1) lookup per section.
@@ -132,24 +189,40 @@ export const ContinuousDiff = forwardRef<ContinuousDiffHandle, Props>(
       }
     }, [files, composerAt]);
 
+    // Stable callbacks for FileDiffSection — these never change identity, so
+    // they don't bust the React.memo on the section.
+    const onOpenComposer = useCallback((loc: ComposerLocation): void => {
+      setComposerAt(loc);
+    }, []);
+    const onCloseComposer = useCallback((): void => {
+      setComposerAt(null);
+    }, []);
+
     return (
       <div className="continuous-diff">
-        {files.map((f) => (
-          <FileDiffSection
-            key={f.path}
-            entry={f}
-            threads={threadsByPath.get(f.path) ?? []}
-            drafts={draftsByPath.get(f.path) ?? []}
-            reviewed={reviewedPaths.has(f.path)}
-            composerAt={composerAt}
-            ctx={ctx}
-            callbacks={callbacks}
-            onOpenComposer={setComposerAt}
-            onCloseComposer={() => setComposerAt(null)}
-            onVisibilityChange={onVisibilityChange}
-            registerNode={registerNode}
-          />
-        ))}
+        {files.map((f) => {
+          // Pass only the slice of composerAt that applies to this file.
+          // For every other file the prop is `null` both before and after the
+          // composer state change — so memoized sections skip rendering.
+          const composerForFile =
+            composerAt && composerAt.filePath === f.path ? composerAt : null;
+          return (
+            <FileDiffSection
+              key={f.path}
+              entry={f}
+              threads={threadsByPath.get(f.path) ?? EMPTY_THREADS}
+              drafts={draftsByPath.get(f.path) ?? EMPTY_DRAFTS}
+              reviewed={reviewedPaths.has(f.path)}
+              composerAt={composerForFile}
+              ctx={ctx}
+              callbacks={callbacks}
+              onOpenComposer={onOpenComposer}
+              onCloseComposer={onCloseComposer}
+              onVisibilityChange={onVisibilityChange}
+              registerNode={registerNode}
+            />
+          );
+        })}
       </div>
     );
   },

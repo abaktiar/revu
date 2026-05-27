@@ -54,10 +54,30 @@ import {
   decodeFile,
   looksBinary,
   type ProviderConfig,
+  type ReadOptions,
   type ReviewProvider,
 } from './ReviewProvider';
 import { computeFileDiff, sliceLines } from '../diff/computeFileDiff';
 import { getCachedBlob, putBlobInCache } from '../diff/blobCache';
+import {
+  getCached,
+  invalidateCached,
+  invalidateMatching,
+  invalidateNamespace,
+  putCached,
+} from '../cache/jsonCache';
+import {
+  approvalKey,
+  commentsKey,
+  differencesKey,
+  fileDiffKey,
+  LIMITS,
+  mergeabilityKey,
+  NS,
+  prDetailKey,
+  prListKey,
+  TTL,
+} from '../cache/keys';
 
 const PR_LIST_PAGE_SIZE = 100;
 const DETAIL_FETCH_CONCURRENCY = 8;
@@ -74,6 +94,20 @@ export class CodeCommitProvider implements ReviewProvider {
   private readonly client: CodeCommitClient;
   private readonly sts: STSClient;
   private cachedCallerArn: string | null = null;
+
+  // In-flight request coalescing. Opening a single PR triggers Promise.all of
+  // ~7 IPC calls from the renderer (detail / differences / comments /
+  // approval / mergeability / drafts / reviewed). Five of those independently
+  // re-fetch the same PR object via GetPullRequest. Without coalescing,
+  // CodeCommit rate-limits, the SDK retries with exponential backoff, and
+  // main is locked up for ~10s — which is what the user sees as "the app
+  // froze." We hold only the in-flight promise (auto-evicted when settled),
+  // so this can never serve stale data: it only deduplicates calls already
+  // racing each other.
+  private inFlightPullRequests = new Map<string, Promise<PullRequest>>();
+  // Approval evaluation has the same problem (called 3× in parallel per open).
+  // Key includes revisionId so a new revision invalidates the cache implicitly.
+  private inFlightApprovalEvals = new Map<string, Promise<ApprovalState>>();
 
   constructor(config: ProviderConfig) {
     const credentials = config.staticCredentials
@@ -109,6 +143,16 @@ export class CodeCommitProvider implements ReviewProvider {
       console.error(
         `[CodeCommit ${name}] ✗ ${aws}\n  input=${JSON.stringify(sanitizeForLog(input))}`,
       );
+      // Detect expired federated/SSO/STS credentials and surface a clear,
+      // actionable message instead of the cryptic AWS text. Without this,
+      // every downstream call returns the same opaque error and the user
+      // has no idea their session just timed out.
+      if (looksLikeExpiredCredentials(err)) {
+        throw new Error(
+          'AWS session expired. Refresh your credentials (re-run aws sso login, ' +
+            're-export your env vars, or paste a fresh AWS access key block in Settings) and try again.',
+        );
+      }
       throw new Error(
         `[${name}] ${aws} (input: ${JSON.stringify(sanitizeForLog(input))})`,
       );
@@ -117,7 +161,15 @@ export class CodeCommitProvider implements ReviewProvider {
 
   // ---- Repos ------------------------------------------------------------
 
-  async listRepositories(): Promise<RepositorySummary[]> {
+  async listRepositories(opts?: ReadOptions): Promise<RepositorySummary[]> {
+    if (!opts?.forceFresh) {
+      const cached = await getCached<RepositorySummary[]>(
+        NS.repos,
+        '_',
+        TTL.repos,
+      );
+      if (cached) return cached;
+    }
     const out: RepositorySummary[] = [];
     let nextToken: string | undefined;
     do {
@@ -133,6 +185,7 @@ export class CodeCommitProvider implements ReviewProvider {
       nextToken = res.nextToken;
     } while (nextToken);
     out.sort((a, b) => a.name.localeCompare(b.name));
+    await putCached(NS.repos, '_', out, LIMITS.repos);
     return out;
   }
 
@@ -141,24 +194,46 @@ export class CodeCommitProvider implements ReviewProvider {
   async listPullRequests(
     repositoryName: string,
     filter: ListPRsFilter,
+    opts?: ReadOptions,
   ): Promise<PullRequestSummary[]> {
+    const ck = prListKey(repositoryName, filter.status);
+    if (!opts?.forceFresh) {
+      const cached = await getCached<PullRequestSummary[]>(
+        NS.prList,
+        ck,
+        TTL.prList,
+      );
+      if (cached) return cached;
+    }
     const ids = await this.collectPullRequestIds(repositoryName, filter.status);
-    return this.fetchSummaries(ids);
+    const summaries = await this.fetchSummaries(ids, opts?.forceFresh);
+    await putCached(NS.prList, ck, summaries, LIMITS.prList);
+    return summaries;
   }
 
   async getPullRequest(
     _repositoryName: string,
     pullRequestId: string,
+    opts?: ReadOptions,
   ): Promise<PullRequestDetail> {
-    const input = { pullRequestId };
-    const res = await this.cc('GetPullRequest', input, (i) =>
-      this.client.send(new GetPullRequestCommand(i)),
-    );
-    if (!res.pullRequest) {
-      throw new Error(`Pull request ${pullRequestId} not found`);
+    if (!opts?.forceFresh) {
+      const cached = await getCached<PullRequestDetail>(
+        NS.prDetail,
+        prDetailKey(pullRequestId),
+        TTL.prDetail,
+      );
+      if (cached) return cached;
     }
-    const approvalState = await this.evaluateApproval(res.pullRequest);
-    return mapPullRequest(res.pullRequest, approvalState);
+    const pr = await this.fetchRawPullRequest(pullRequestId, opts?.forceFresh);
+    const approvalState = await this.evaluateApproval(pr);
+    const detail = mapPullRequest(pr, approvalState);
+    await putCached(
+      NS.prDetail,
+      prDetailKey(pullRequestId),
+      detail,
+      LIMITS.prDetail,
+    );
+    return detail;
   }
 
   // ---- Diffs ------------------------------------------------------------
@@ -166,8 +241,9 @@ export class CodeCommitProvider implements ReviewProvider {
   async getDifferences(
     repositoryName: string,
     pullRequestId: string,
+    opts?: ReadOptions,
   ): Promise<PRDifferences> {
-    const pr = await this.getPullRequest(repositoryName, pullRequestId);
+    const pr = await this.getPullRequest(repositoryName, pullRequestId, opts);
     const target =
       pr.targets.find(
         (t) => t.repositoryName.toLowerCase() === repositoryName.toLowerCase(),
@@ -210,6 +286,14 @@ export class CodeCommitProvider implements ReviewProvider {
       );
     }
 
+    // Cache lookup: keyed by the (before, after) commit pair. Commits are
+    // immutable in git, so this entry stays valid forever — no TTL.
+    const dKey = differencesKey(repositoryName, beforeCommit, afterCommit);
+    if (!opts?.forceFresh) {
+      const cached = await getCached<PRDifferences>(NS.differences, dKey);
+      if (cached) return cached;
+    }
+
     const diffs: Difference[] = [];
     let nextToken: string | undefined;
     do {
@@ -229,13 +313,15 @@ export class CodeCommitProvider implements ReviewProvider {
 
     const files = diffs.map(mapDifference);
     files.sort((a, b) => a.path.localeCompare(b.path));
-    return {
+    const result: PRDifferences = {
       pullRequestId,
       repositoryName,
       beforeCommitId: beforeCommit,
       afterCommitId: afterCommit,
       files,
     };
+    await putCached(NS.differences, dKey, result, LIMITS.differences);
+    return result;
   }
 
   async getFilePair(
@@ -253,7 +339,21 @@ export class CodeCommitProvider implements ReviewProvider {
   async getFileDiff(
     repositoryName: string,
     entry: FileDiffEntry,
+    opts?: ReadOptions,
   ): Promise<FileDiff> {
+    // Cache lookup: keyed by the (beforeBlobId, afterBlobId, changeType)
+    // triple. Blob IDs are content-addressed, so the same pair always
+    // produces the same diff. No TTL.
+    const fKey = fileDiffKey(
+      entry.beforeBlobId,
+      entry.afterBlobId,
+      entry.changeType,
+    );
+    if (!opts?.forceFresh) {
+      const cached = await getCached<FileDiff>(NS.fileDiff, fKey);
+      if (cached) return cached;
+    }
+
     const [beforeBytes, afterBytes] = await Promise.all([
       this.fetchBlobBytes(repositoryName, entry.beforeBlobId),
       this.fetchBlobBytes(repositoryName, entry.afterBlobId),
@@ -263,7 +363,7 @@ export class CodeCommitProvider implements ReviewProvider {
       (afterBytes ? looksBinary(afterBytes) : false);
     const beforeText = beforeBytes && !binary ? decodeUtf8(beforeBytes) : null;
     const afterText = afterBytes && !binary ? decodeUtf8(afterBytes) : null;
-    return computeFileDiff({
+    const diff = computeFileDiff({
       path: entry.path,
       beforePath: entry.beforePath,
       afterPath: entry.afterPath,
@@ -274,6 +374,8 @@ export class CodeCommitProvider implements ReviewProvider {
       afterText,
       binary,
     });
+    await putCached(NS.fileDiff, fKey, diff, LIMITS.fileDiff);
+    return diff;
   }
 
   async expandLines(req: ExpandLinesRequest): Promise<ExpandLinesResponse> {
@@ -294,7 +396,18 @@ export class CodeCommitProvider implements ReviewProvider {
   async listComments(
     repositoryName: string,
     pullRequestId: string,
+    opts?: ReadOptions,
   ): Promise<CommentThread[]> {
+    const cKey = commentsKey(repositoryName, pullRequestId);
+    if (!opts?.forceFresh) {
+      const cached = await getCached<CommentThread[]>(
+        NS.comments,
+        cKey,
+        TTL.comments,
+      );
+      if (cached) return cached;
+    }
+
     // CodeCommit's GetCommentsForPullRequest requires beforeCommitId and
     // afterCommitId in practice (the docs say "optional" but the service
     // returns CommitIdRequiredException when they're omitted). Derive them
@@ -319,9 +432,11 @@ export class CodeCommitProvider implements ReviewProvider {
       nextToken = res.nextToken;
     } while (nextToken);
 
-    return raw
+    const threads = raw
       .map((g) => mapCommentGroup(g, pullRequestId, repositoryName))
       .filter((t): t is CommentThread => t !== null);
+    await putCached(NS.comments, cKey, threads, LIMITS.comments);
+    return threads;
   }
 
   private async resolveCommits(
@@ -378,6 +493,11 @@ export class CodeCommitProvider implements ReviewProvider {
     if (!comment?.commentId) {
       throw new Error('CodeCommit did not return the new comment.');
     }
+    // Comments cache is now stale; next listComments must hit AWS.
+    await invalidateCached(
+      NS.comments,
+      commentsKey(input.repositoryName, input.pullRequestId),
+    );
     return {
       threadId: comment.commentId,
       pullRequestId: input.pullRequestId,
@@ -396,27 +516,70 @@ export class CodeCommitProvider implements ReviewProvider {
   async getApprovalView(
     repositoryName: string,
     pullRequestId: string,
+    opts?: ReadOptions,
   ): Promise<PullRequestApprovalView> {
-    const pr = await this.getRawPullRequest(pullRequestId);
+    const pr = await this.getRawPullRequest(pullRequestId, opts?.forceFresh);
     const revisionId = nonEmpty(pr.revisionId);
     if (!revisionId) {
       throw new Error(
         `Pull request ${pullRequestId} has no revisionId — cannot read approvals.`,
       );
     }
+    // Cache lookup: keyed by revisionId. CodeCommit changes revisionId on any
+    // PR update, so the cached entry is implicitly invalidated whenever the
+    // PR's approval-relevant state could have shifted. No TTL needed.
+    const aKey = approvalKey(pullRequestId, revisionId);
+    if (!opts?.forceFresh) {
+      const cached = await getCached<PullRequestApprovalView>(
+        NS.approval,
+        aKey,
+      );
+      if (cached) return cached;
+    }
     const states = await this.fetchApprovalStates(pullRequestId, revisionId);
     const selfArn = await this.callerArn();
     const selfApproved = states.some(
       (s) => s.userArn === selfArn && s.approvalState === 'APPROVE',
     );
-    return { revisionId, states, selfApproved, selfArn };
+    const view: PullRequestApprovalView = {
+      revisionId,
+      states,
+      selfApproved,
+      selfArn,
+    };
+    await putCached(NS.approval, aKey, view, LIMITS.approval);
+    return view;
   }
 
 async getMergeability(
     repositoryName: string,
     pullRequestId: string,
+    opts?: ReadOptions,
   ): Promise<PullRequestMergeability> {
-    const pr = await this.getRawPullRequest(pullRequestId);
+    const mKey = mergeabilityKey(repositoryName, pullRequestId);
+    if (!opts?.forceFresh) {
+      const cached = await getCached<PullRequestMergeability>(
+        NS.mergeability,
+        mKey,
+        TTL.mergeability,
+      );
+      if (cached) return cached;
+    }
+    const result = await this.computeMergeability(
+      repositoryName,
+      pullRequestId,
+      opts?.forceFresh,
+    );
+    await putCached(NS.mergeability, mKey, result, LIMITS.mergeability);
+    return result;
+  }
+
+  private async computeMergeability(
+    repositoryName: string,
+    pullRequestId: string,
+    forceFresh: boolean | undefined,
+  ): Promise<PullRequestMergeability> {
+    const pr = await this.getRawPullRequest(pullRequestId, forceFresh);
     const target =
       (pr.pullRequestTargets ?? []).find(
         (t) =>
@@ -528,7 +691,17 @@ async getMergeability(
     await this.cc('UpdatePullRequestApprovalState', input, (i) =>
       this.client.send(new UpdatePullRequestApprovalStateCommand(i)),
     );
-    return this.getApprovalView(repositoryName, pullRequestId);
+    // Approval changed → drop cached approval/pr-detail/pr-list entries that
+    // depend on it. PR-list filters by approval state, so its cache is also
+    // stale until a fresh refresh.
+    await Promise.all([
+      invalidateCached(NS.approval, approvalKey(pullRequestId, revisionId)),
+      invalidateCached(NS.prDetail, prDetailKey(pullRequestId)),
+      invalidateNamespace(NS.prList),
+    ]);
+    return this.getApprovalView(repositoryName, pullRequestId, {
+      forceFresh: true,
+    });
   }
 
   private async fetchApprovalStates(
@@ -564,15 +737,48 @@ async getMergeability(
   }
 
   // Internal raw fetch — gives back the SDK shape (with revisionId, etc.).
-  private async getRawPullRequest(pullRequestId: string): Promise<PullRequest> {
-    const input = { pullRequestId };
-    const res = await this.cc('GetPullRequest', input, (i) =>
-      this.client.send(new GetPullRequestCommand(i)),
-    );
-    if (!res.pullRequest) {
-      throw new Error(`Pull request ${pullRequestId} not found`);
+  // All internal call sites go through here so concurrent loads coalesce onto
+  // a single GetPullRequest. (See fetchRawPullRequest comment for context.)
+  private async getRawPullRequest(
+    pullRequestId: string,
+    forceFresh?: boolean,
+  ): Promise<PullRequest> {
+    return this.fetchRawPullRequest(pullRequestId, forceFresh);
+  }
+
+  // The one place that actually issues GetPullRequest. Everything else routes
+  // through here. Only in-flight promises are cached — once settled the entry
+  // is evicted, so we can never serve stale data; we only avoid the
+  // rate-limit storm when multiple call sites race.
+  //
+  // `forceFresh` opts out of the in-flight coalescing too — when the user hits
+  // Refresh we genuinely want a new SDK call, not the in-flight one that
+  // started before the refresh button was pressed.
+  private async fetchRawPullRequest(
+    pullRequestId: string,
+    forceFresh?: boolean,
+  ): Promise<PullRequest> {
+    if (!forceFresh) {
+      const existing = this.inFlightPullRequests.get(pullRequestId);
+      if (existing) return existing;
     }
-    return res.pullRequest;
+    const promise = (async () => {
+      const input = { pullRequestId };
+      const res = await this.cc('GetPullRequest', input, (i) =>
+        this.client.send(new GetPullRequestCommand(i)),
+      );
+      if (!res.pullRequest) {
+        throw new Error(`Pull request ${pullRequestId} not found`);
+      }
+      return res.pullRequest;
+    })();
+    this.inFlightPullRequests.set(pullRequestId, promise);
+    void promise.finally(() => {
+      if (this.inFlightPullRequests.get(pullRequestId) === promise) {
+        this.inFlightPullRequests.delete(pullRequestId);
+      }
+    });
+    return promise;
   }
 
   async postReply(input: PostReplyInput): Promise<CommentThread> {
@@ -587,6 +793,10 @@ async getMergeability(
     if (!comment?.commentId) {
       throw new Error('CodeCommit did not return the reply comment.');
     }
+    // We don't know which PR this reply belongs to from PostReplyInput, so
+    // we conservatively drop every cached comments list. The namespace is
+    // capped tightly (LIMITS.comments), so this is cheap.
+    await invalidateNamespace(NS.comments);
     return {
       threadId: input.inReplyTo,
       pullRequestId: '',
@@ -649,19 +859,43 @@ async getMergeability(
     return ids;
   }
 
-  private async fetchSummaries(ids: string[]): Promise<PullRequestSummary[]> {
+  private async fetchSummaries(
+    ids: string[],
+    forceFresh?: boolean,
+  ): Promise<PullRequestSummary[]> {
     const out: PullRequestSummary[] = [];
     for (let i = 0; i < ids.length; i += DETAIL_FETCH_CONCURRENCY) {
       const batch = ids.slice(i, i + DETAIL_FETCH_CONCURRENCY);
       const results = await Promise.all(
         batch.map(async (id) => {
-          const input = { pullRequestId: id };
-          const res = await this.cc('GetPullRequest', input, (inp) =>
-            this.client.send(new GetPullRequestCommand(inp)),
-          );
-          if (!res.pullRequest) return null;
-          const approvalState = await this.evaluateApproval(res.pullRequest);
-          return mapPullRequest(res.pullRequest, approvalState);
+          try {
+            // Per-PR cache: if a PR detail is cached and we're not forcing
+            // fresh, reuse it. This is the big win for revisiting the PR
+            // list — only PRs we don't have yet (or that have rolled past
+            // their TTL) hit AWS.
+            if (!forceFresh) {
+              const cached = await getCached<PullRequestSummary>(
+                NS.prDetail,
+                prDetailKey(id),
+                TTL.prDetail,
+              );
+              if (cached) return cached;
+            }
+            const pr = await this.fetchRawPullRequest(id, forceFresh);
+            const approvalState = await this.evaluateApproval(pr);
+            const summary = mapPullRequest(pr, approvalState);
+            await putCached(
+              NS.prDetail,
+              prDetailKey(id),
+              summary,
+              LIMITS.prDetail,
+            );
+            return summary;
+          } catch {
+            // One PR failing (e.g. not-found, or transient throttle) must not
+            // tank the whole list. Skip it.
+            return null;
+          }
         }),
       );
       for (const r of results) {
@@ -677,19 +911,94 @@ async getMergeability(
     const rules = pr.approvalRules ?? [];
     if (!id || !revisionId) return 'UNKNOWN';
     if (rules.length === 0) return 'NO_RULES';
-    try {
-      const input = { pullRequestId: id, revisionId };
-      const res = await this.cc(
-        'EvaluatePullRequestApprovalRules',
-        input,
-        (i) =>
-          this.client.send(new EvaluatePullRequestApprovalRulesCommand(i)),
-      );
-      return res.evaluation?.approved ? 'APPROVED' : 'NOT_APPROVED';
-    } catch {
-      // Approval evaluation is best-effort — never let it kill the PR list load.
-      return 'UNKNOWN';
-    }
+
+    const key = `${id}|${revisionId}`;
+    const existing = this.inFlightApprovalEvals.get(key);
+    if (existing) return existing;
+
+    const promise = (async (): Promise<ApprovalState> => {
+      try {
+        const input = { pullRequestId: id, revisionId };
+        const res = await this.cc(
+          'EvaluatePullRequestApprovalRules',
+          input,
+          (i) =>
+            this.client.send(new EvaluatePullRequestApprovalRulesCommand(i)),
+        );
+        return res.evaluation?.approved ? 'APPROVED' : 'NOT_APPROVED';
+      } catch {
+        // Approval evaluation is best-effort — never let it kill the PR list load.
+        return 'UNKNOWN';
+      }
+    })();
+    this.inFlightApprovalEvals.set(key, promise);
+    void promise.finally(() => {
+      if (this.inFlightApprovalEvals.get(key) === promise) {
+        this.inFlightApprovalEvals.delete(key);
+      }
+    });
+    return promise;
+  }
+
+  // ---- Cache management ----------------------------------------------
+
+  // Drop every cached entry tied to one PR. Used by the renderer's per-PR
+  // Refresh button: after this returns, the next read for this PR will hit
+  // AWS regardless of TTLs. We intentionally do NOT touch the file-diff
+  // cache (keyed by blob IDs) or the differences cache (keyed by commit
+  // IDs) — those are content-addressed and remain valid; if a new commit
+  // got pushed the keys themselves change.
+  async invalidatePullRequest(
+    repositoryName: string,
+    pullRequestId: string,
+  ): Promise<void> {
+    await Promise.all([
+      invalidateCached(NS.prDetail, prDetailKey(pullRequestId)),
+      invalidateCached(NS.comments, commentsKey(repositoryName, pullRequestId)),
+      invalidateCached(
+        NS.mergeability,
+        mergeabilityKey(repositoryName, pullRequestId),
+      ),
+      // We don't know revisionId here, so drop every approval entry for
+      // this PR.
+      invalidateMatching(NS.approval, (k) =>
+        k.startsWith(`${pullRequestId}|`),
+      ),
+    ]);
+  }
+
+  // Drop every cached entry tied to one repo. Used by the PR-list Refresh
+  // button. Touches PR list + every per-PR cache for this repo.
+  async invalidateRepository(repositoryName: string): Promise<void> {
+    await Promise.all([
+      invalidateMatching(NS.prList, (k) => k.startsWith(`${repositoryName}|`)),
+      invalidateMatching(NS.comments, (k) =>
+        k.startsWith(`${repositoryName}|`),
+      ),
+      invalidateMatching(NS.mergeability, (k) =>
+        k.startsWith(`${repositoryName}|`),
+      ),
+      invalidateMatching(NS.differences, (k) =>
+        k.startsWith(`${repositoryName}|`),
+      ),
+      // PR-detail and approval are not keyed by repo; we drop them wholesale
+      // because the user's intent on "refresh repo" is "show me the truth."
+      invalidateNamespace(NS.prDetail),
+      invalidateNamespace(NS.approval),
+    ]);
+  }
+
+  async invalidateAll(): Promise<void> {
+    await Promise.all([
+      invalidateNamespace(NS.repos),
+      invalidateNamespace(NS.prList),
+      invalidateNamespace(NS.prDetail),
+      invalidateNamespace(NS.comments),
+      invalidateNamespace(NS.mergeability),
+      invalidateNamespace(NS.differences),
+      invalidateNamespace(NS.fileDiff),
+      invalidateNamespace(NS.approval),
+    ]);
   }
 }
 
@@ -782,6 +1091,30 @@ function mapCommentGroup(
 
 function decodeUtf8(bytes: Uint8Array): string {
   return new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+}
+
+function looksLikeExpiredCredentials(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  // AWS SDK v3 attaches a `name` / `Code` of "ExpiredToken" or
+  // "ExpiredTokenException" for STS-issued temporary credentials, and may
+  // also report "InvalidClientTokenId" / "UnrecognizedClientException" if
+  // the access key itself was revoked. Match on either the typed name or
+  // the human-readable message because different services format these
+  // slightly differently.
+  const e = err as { name?: string; Code?: string; message?: string };
+  const tag = (e.name ?? e.Code ?? '').toString();
+  const msg = (e.message ?? '').toString().toLowerCase();
+  if (/expiredtoken|invalidclienttoken|unrecognizedclient/i.test(tag)) {
+    return true;
+  }
+  if (
+    msg.includes('security token included in the request is expired') ||
+    msg.includes('the security token included in the request is invalid') ||
+    msg.includes('credentials could not be refreshed')
+  ) {
+    return true;
+  }
+  return false;
 }
 
 function nonEmpty(s: string | undefined): string | undefined {

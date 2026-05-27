@@ -18,6 +18,14 @@ import type {
   RepositorySummary,
 } from '@shared/types';
 
+// Pass `{ forceFresh: true }` from the renderer's Refresh button to skip the
+// disk cache for this single call. The provider is still free to use any
+// in-memory coalescing (e.g. de-duping concurrent identical fetches inside
+// the same request burst); forceFresh only opts out of cross-call caching.
+export interface ReadOptions {
+  forceFresh?: boolean;
+}
+
 /**
  * The single seam between the app and whatever code-review backend we're
  * talking to. CodeCommit is the first implementation; GitHub/GitLab/Bitbucket
@@ -28,20 +36,23 @@ export interface ReviewProvider {
   readonly name: string;
 
   // Repos & PRs
-  listRepositories(): Promise<RepositorySummary[]>;
+  listRepositories(opts?: ReadOptions): Promise<RepositorySummary[]>;
   listPullRequests(
     repositoryName: string,
     filter: ListPRsFilter,
+    opts?: ReadOptions,
   ): Promise<PullRequestSummary[]>;
   getPullRequest(
     repositoryName: string,
     pullRequestId: string,
+    opts?: ReadOptions,
   ): Promise<PullRequestDetail>;
 
   // Diffs
   getDifferences(
     repositoryName: string,
     pullRequestId: string,
+    opts?: ReadOptions,
   ): Promise<PRDifferences>;
   getFilePair(
     repositoryName: string,
@@ -54,6 +65,7 @@ export interface ReviewProvider {
   getFileDiff(
     repositoryName: string,
     entry: FileDiffEntry,
+    opts?: ReadOptions,
   ): Promise<FileDiff>;
   // Returns a slice of one side's blob; used by the "expand context" buttons
   // between hunks.
@@ -63,6 +75,7 @@ export interface ReviewProvider {
   listComments(
     repositoryName: string,
     pullRequestId: string,
+    opts?: ReadOptions,
   ): Promise<CommentThread[]>;
   postComment(input: PostCommentInput): Promise<CommentThread>;
   postReply(input: PostReplyInput): Promise<CommentThread>;
@@ -71,6 +84,7 @@ export interface ReviewProvider {
   getApprovalView(
     repositoryName: string,
     pullRequestId: string,
+    opts?: ReadOptions,
   ): Promise<PullRequestApprovalView>;
   updateApprovalState(
     repositoryName: string,
@@ -83,7 +97,16 @@ export interface ReviewProvider {
   getMergeability(
     repositoryName: string,
     pullRequestId: string,
+    opts?: ReadOptions,
   ): Promise<PullRequestMergeability>;
+
+  // Cache management. Implementations that don't cache can no-op these.
+  invalidatePullRequest(
+    repositoryName: string,
+    pullRequestId: string,
+  ): Promise<void>;
+  invalidateRepository(repositoryName: string): Promise<void>;
+  invalidateAll(): Promise<void>;
 }
 
 export interface StaticCredentials {

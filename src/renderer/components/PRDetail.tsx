@@ -15,7 +15,14 @@ import type {
 } from '@shared/types';
 import { api, unwrap } from '../api';
 import { FileSidebar } from './FileSidebar';
-import { ContinuousDiff, type ContinuousDiffHandle } from './ContinuousDiff/ContinuousDiff';
+import {
+  ContinuousDiff,
+  type ContinuousDiffHandle,
+} from './ContinuousDiff/ContinuousDiff';
+import type {
+  DiffCallbacks,
+  DiffContext,
+} from './ContinuousDiff/types';
 import { PRMetadata } from './PRMetadata';
 import { Markdown } from './Markdown';
 
@@ -44,23 +51,33 @@ export function PRDetail({
   const [postingThreadId, setPostingThreadId] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [showGeneral, setShowGeneral] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshToken, setRefreshToken] = useState(0);
   const diffRef = useRef<ContinuousDiffHandle | null>(null);
 
   // ---- Load PR data ---------------------------------------------------
+  // `refreshToken` bumps when the user hits the Refresh button; the
+  // pre-effect side-effect (cache invalidate) runs in onRefresh below, so by
+  // the time this effect re-runs every read goes straight to AWS.
   useEffect(() => {
     let cancelled = false;
     setLoadError(null);
     setDifferences(null);
     setActiveFile(null);
 
+    const forceFresh = refreshToken > 0;
+    const opts = forceFresh ? { forceFresh: true } : undefined;
+
     Promise.all([
-      unwrap(api.prs.get(repositoryName, pullRequest.id)),
-      unwrap(api.prs.differences(repositoryName, pullRequest.id)),
-      unwrap(api.comments.list(repositoryName, pullRequest.id)),
+      unwrap(api.prs.get(repositoryName, pullRequest.id, opts)),
+      unwrap(api.prs.differences(repositoryName, pullRequest.id, opts)),
+      unwrap(api.comments.list(repositoryName, pullRequest.id, opts)),
       unwrap(api.drafts.list(pullRequest.id)),
       unwrap(api.reviewed.list(pullRequest.id)),
-      unwrap(api.approval.get(repositoryName, pullRequest.id)).catch(() => null),
-      unwrap(api.mergeability.get(repositoryName, pullRequest.id)).catch(
+      unwrap(api.approval.get(repositoryName, pullRequest.id, opts)).catch(
+        () => null,
+      ),
+      unwrap(api.mergeability.get(repositoryName, pullRequest.id, opts)).catch(
         () => null,
       ),
     ])
@@ -73,12 +90,32 @@ export function PRDetail({
         setReviewed(rv);
         setApproval(app);
         setMergeability(merge);
+        setRefreshing(false);
       })
-      .catch((err: Error) => !cancelled && setLoadError(err.message));
+      .catch((err: Error) => {
+        if (cancelled) return;
+        setLoadError(err.message);
+        setRefreshing(false);
+      });
 
     return () => {
       cancelled = true;
     };
+  }, [repositoryName, pullRequest.id, refreshToken]);
+
+  // Hard refresh: drop every cached entry tied to this PR (and the in-memory
+  // blob cache, since file diffs are keyed by blob IDs and we want truly
+  // everything re-read on a user-driven refresh) and re-run the load effect.
+  const onRefresh = useCallback(async (): Promise<void> => {
+    setRefreshing(true);
+    try {
+      await unwrap(api.cache.invalidatePr(repositoryName, pullRequest.id));
+    } catch (err) {
+      // Cache invalidate is best-effort. If it fails (extremely unlikely), we
+      // still bump the refresh token below so reads pass forceFresh=true.
+      console.error('[refresh] cache invalidate failed:', err);
+    }
+    setRefreshToken((n) => n + 1);
   }, [repositoryName, pullRequest.id]);
 
   // ---- Derived state --------------------------------------------------
@@ -200,6 +237,61 @@ export function PRDetail({
     [differences, pullRequest.id],
   );
 
+  // Fire-and-forget wrapper used in `callbacks` below so we have a stable
+  // reference (the inline `(f, next) => void toggleReviewed(...)` we used to
+  // build inside the JSX was a new function every render — which busted any
+  // attempt to memoize FileDiffSection).
+  const toggleReviewedSync = useCallback(
+    (file: FileDiffEntry, next: boolean): void => {
+      void toggleReviewed(file, next);
+    },
+    [toggleReviewed],
+  );
+
+  // ---- Stable props for ContinuousDiff -------------------------------
+  // These objects used to be built inline in the JSX, so every PRDetail render
+  // (including every scroll-driven setActiveFile) produced new `ctx` /
+  // `callbacks` references. With FileDiffSection now memoized, prop identity
+  // matters — recomputing these only when their inputs actually change is what
+  // lets the file sections skip re-rendering during scroll.
+  const ctx: DiffContext | null = useMemo(() => {
+    if (!differences) return null;
+    return {
+      pullRequestId: pullRequest.id,
+      repositoryName,
+      beforeCommitId: differences.beforeCommitId,
+      afterCommitId: differences.afterCommitId,
+      postingThreadId,
+    };
+  }, [
+    differences,
+    pullRequest.id,
+    repositoryName,
+    postingThreadId,
+  ]);
+
+  const callbacks: DiffCallbacks = useMemo(
+    () => ({
+      onPostComment: postComment,
+      onPostReply: postReply,
+      onSaveDraft: saveDraft,
+      onDeleteDraft: deleteDraft,
+      onToggleReviewed: toggleReviewedSync,
+    }),
+    [postComment, postReply, saveDraft, deleteDraft, toggleReviewedSync],
+  );
+
+  const onActiveFileChange = useCallback((path: string | null): void => {
+    setActiveFile(path);
+  }, []);
+
+  const onSidebarSelect = useCallback((file: FileDiffEntry): void => {
+    diffRef.current?.scrollToFile(file.path, {
+      behavior: 'smooth',
+      block: 'start',
+    });
+  }, []);
+
   const applyApproval = useCallback(
     async (action: ApprovalAction): Promise<void> => {
       setApprovalBusy(true);
@@ -252,6 +344,8 @@ export function PRDetail({
           onToggleGeneral={() => setShowGeneral((v) => !v)}
           metaOpen={metaOpen}
           onToggleMeta={() => setMetaOpen((v) => !v)}
+          refreshing={refreshing}
+          onRefresh={() => void onRefresh()}
         />
         <div className="error">
           <div>Could not load PR data.</div>
@@ -277,6 +371,8 @@ export function PRDetail({
           onToggleGeneral={() => setShowGeneral((v) => !v)}
           metaOpen={metaOpen}
           onToggleMeta={() => setMetaOpen((v) => !v)}
+          refreshing={refreshing}
+          onRefresh={() => void onRefresh()}
         />
         <div className="loading">Loading PR…</div>
       </div>
@@ -298,6 +394,8 @@ export function PRDetail({
         onToggleGeneral={() => setShowGeneral((v) => !v)}
         metaOpen={metaOpen}
         onToggleMeta={() => setMetaOpen((v) => !v)}
+        refreshing={refreshing}
+        onRefresh={() => void onRefresh()}
       />
       {metaOpen && (
         <PRMetadata
@@ -317,16 +415,11 @@ export function PRDetail({
           selectedPath={activeFile ?? undefined}
           commentCounts={commentCounts}
           reviewedPaths={reviewedPaths}
-          onSelect={(f) =>
-            diffRef.current?.scrollToFile(f.path, {
-              behavior: 'smooth',
-              block: 'start',
-            })
-          }
-          onToggleReviewed={(f, next) => void toggleReviewed(f, next)}
+          onSelect={onSidebarSelect}
+          onToggleReviewed={toggleReviewedSync}
         />
         <div className="diff-area">
-          {differences.files.length === 0 ? (
+          {differences.files.length === 0 || !ctx ? (
             <div className="empty">No files changed.</div>
           ) : (
             <ContinuousDiff
@@ -335,21 +428,9 @@ export function PRDetail({
               threads={threads}
               drafts={drafts}
               reviewedPaths={reviewedPaths}
-              ctx={{
-                pullRequestId: pullRequest.id,
-                repositoryName,
-                beforeCommitId: differences.beforeCommitId,
-                afterCommitId: differences.afterCommitId,
-                postingThreadId,
-              }}
-              callbacks={{
-                onPostComment: postComment,
-                onPostReply: postReply,
-                onSaveDraft: saveDraft,
-                onDeleteDraft: deleteDraft,
-                onToggleReviewed: (f, next) => void toggleReviewed(f, next),
-              }}
-              onActiveFileChange={setActiveFile}
+              ctx={ctx}
+              callbacks={callbacks}
+              onActiveFileChange={onActiveFileChange}
             />
           )}
         </div>
@@ -394,6 +475,8 @@ function Toolbar({
   onToggleGeneral,
   metaOpen,
   onToggleMeta,
+  refreshing,
+  onRefresh,
 }: {
   pr: PullRequestSummary;
   detail: PullRequestDetail | null;
@@ -407,6 +490,8 @@ function Toolbar({
   onToggleGeneral: () => void;
   metaOpen: boolean;
   onToggleMeta: () => void;
+  refreshing: boolean;
+  onRefresh: () => void;
 }): JSX.Element {
   const approvedCount =
     approval?.states.filter((s) => s.approvalState === 'APPROVE').length ?? 0;
@@ -430,6 +515,13 @@ function Toolbar({
         </span>
       )}
       <span className="grow" />
+      <button
+        onClick={onRefresh}
+        disabled={refreshing}
+        title="Bypass local cache and re-fetch this PR from AWS"
+      >
+        {refreshing ? 'Refreshing…' : '↻ Refresh'}
+      </button>
       <button onClick={onToggleMeta}>
         {metaOpen ? 'Hide details' : 'Show details'}
       </button>

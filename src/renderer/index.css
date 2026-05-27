@@ -867,6 +867,13 @@ kbd {
   margin: 12px;
   background: var(--panel);
   overflow: hidden;
+  /* Browser-level virtualization: skip layout+paint for off-screen sections
+   * entirely. contain-intrinsic-size reserves space until first measurement,
+   * then the browser remembers the real size. This is the difference between
+   * 30 loaded files paginating one viewport at a time vs all of them
+   * relayouting on every scroll tick. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 600px;
 }
 
 .file-section.is-reviewed {
@@ -902,16 +909,34 @@ kbd {
   background: var(--bg);
 }
 
+/* Each hunk lives inside its own wrapper. While unmounted, the wrapper is a
+ * placeholder div with `height: <lines * 18px>` so the scrollbar is honest
+ * before the real rows exist. Once mounted, the wrapper just stacks its
+ * children (header + rows) — they're block / grid elements that lay out
+ * naturally. */
+.hunk-wrap {
+  display: block;
+}
+
+.hunk-wrap.hunk-placeholder {
+  background: transparent;
+}
+
+/* Vertical stack of hunks / threads / composers / expand-gaps.
+ * Was: one big CSS grid per file with display:contents rows. That layout made
+ * every row's cells part of one giant grid, which prevents per-row
+ * content-visibility (display:contents elements aren't paint containers).
+ * Now: each .drow is its own grid with the same fixed columns — visually
+ * identical, but each row is now an independent paint container the browser
+ * can elide when off-screen. */
 .diff-grid {
-  display: grid;
-  grid-template-columns: 48px 48px 18px 1fr;
+  display: block;
   font-family: ui-monospace, 'SF Mono', Menlo, monospace;
   font-size: 12px;
   line-height: 18px;
 }
 
 .hunk-header {
-  grid-column: 1 / -1;
   background: rgba(91, 141, 239, 0.1);
   color: var(--text-dim);
   padding: 4px 12px;
@@ -921,7 +946,16 @@ kbd {
 }
 
 .drow {
-  display: contents;
+  display: grid;
+  grid-template-columns: 48px 48px 18px 1fr;
+  /* We intentionally do NOT set content-visibility on individual rows.
+   * Per-row content-visibility forces the browser to maintain a paint
+   * container for every one of (potentially) thousands of rows, and the
+   * bookkeeping cost dominated the savings on medium PRs. Virtualization
+   * is already done at coarser granularity: each hunk renders as a
+   * `hunk-placeholder` (a single sized div) until it scrolls near the
+   * viewport, and `.file-section` itself uses content-visibility to skip
+   * off-screen file sections entirely. Those two levels are enough. */
 }
 
 .drow > .dgutter,
@@ -1004,10 +1038,10 @@ kbd {
   z-index: 1;
 }
 
-/* Thread + composer rows span all columns inside the diff grid */
+/* Threads + composers are full-width block elements at the diff-grid level.
+ * (No longer need grid-column: 1 / -1 since .diff-grid isn't a grid anymore.) */
 .drow-thread,
 .drow-composer {
-  grid-column: 1 / -1;
   display: block;
   background: var(--panel);
   border-top: 1px dashed var(--border);
@@ -1019,7 +1053,6 @@ kbd {
 }
 
 .expand-gap {
-  grid-column: 1 / -1;
   display: flex;
   align-items: center;
   gap: 10px;

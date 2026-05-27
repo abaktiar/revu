@@ -36,6 +36,7 @@ import {
 } from './settings';
 import { deleteDraft, listDrafts, saveDraft } from './drafts';
 import { listReviewed, setReviewed } from './reviewed';
+import { clearAllCaches } from './cache/jsonCache';
 
 export const IPC = {
   settingsGet: 'settings:get',
@@ -61,6 +62,9 @@ export const IPC = {
   mergeabilityGet: 'mergeability:get',
   reviewedList: 'reviewed:list',
   reviewedToggle: 'reviewed:toggle',
+  cacheInvalidatePr: 'cache:invalidate-pr',
+  cacheInvalidateRepo: 'cache:invalidate-repo',
+  cacheClearAll: 'cache:clear-all',
 } as const;
 
 let provider: ReviewProvider | null = null;
@@ -174,10 +178,12 @@ export function registerIpc(): void {
 
   ipcMain.handle(
     IPC.reposList,
-    async (): Promise<IpcResult<RepositorySummary[]>> => {
+    async (_e, opts?: { forceFresh?: boolean }): Promise<
+      IpcResult<RepositorySummary[]>
+    > => {
       try {
         const p = await getProvider();
-        return ok(await p.listRepositories());
+        return ok(await p.listRepositories(opts));
       } catch (err) {
         return fail(err);
       }
@@ -190,11 +196,12 @@ export function registerIpc(): void {
       _e,
       repositoryName: string,
       filter: ListPRsFilter,
+      opts?: { forceFresh?: boolean },
     ): Promise<IpcResult<PullRequestSummary[]>> => {
       try {
         if (!repositoryName) throw new Error('repositoryName is required');
         const p = await getProvider();
-        return ok(await p.listPullRequests(repositoryName, filter));
+        return ok(await p.listPullRequests(repositoryName, filter, opts));
       } catch (err) {
         return fail(err);
       }
@@ -207,10 +214,11 @@ export function registerIpc(): void {
       _e,
       repositoryName: string,
       pullRequestId: string,
+      opts?: { forceFresh?: boolean },
     ): Promise<IpcResult<PullRequestDetail>> => {
       try {
         const p = await getProvider();
-        return ok(await p.getPullRequest(repositoryName, pullRequestId));
+        return ok(await p.getPullRequest(repositoryName, pullRequestId, opts));
       } catch (err) {
         return fail(err);
       }
@@ -223,10 +231,13 @@ export function registerIpc(): void {
       _e,
       repositoryName: string,
       pullRequestId: string,
+      opts?: { forceFresh?: boolean },
     ): Promise<IpcResult<PRDifferences>> => {
       try {
         const p = await getProvider();
-        return ok(await p.getDifferences(repositoryName, pullRequestId));
+        return ok(
+          await p.getDifferences(repositoryName, pullRequestId, opts),
+        );
       } catch (err) {
         return fail(err);
       }
@@ -256,10 +267,11 @@ export function registerIpc(): void {
       _e,
       repositoryName: string,
       entry: FileDiffEntry,
+      opts?: { forceFresh?: boolean },
     ): Promise<IpcResult<FileDiff>> => {
       try {
         const p = await getProvider();
-        return ok(await p.getFileDiff(repositoryName, entry));
+        return ok(await p.getFileDiff(repositoryName, entry, opts));
       } catch (err) {
         return fail(err);
       }
@@ -288,10 +300,11 @@ export function registerIpc(): void {
       _e,
       repositoryName: string,
       pullRequestId: string,
+      opts?: { forceFresh?: boolean },
     ): Promise<IpcResult<CommentThread[]>> => {
       try {
         const p = await getProvider();
-        return ok(await p.listComments(repositoryName, pullRequestId));
+        return ok(await p.listComments(repositoryName, pullRequestId, opts));
       } catch (err) {
         return fail(err);
       }
@@ -382,10 +395,13 @@ export function registerIpc(): void {
       _e,
       repositoryName: string,
       pullRequestId: string,
+      opts?: { forceFresh?: boolean },
     ): Promise<IpcResult<PullRequestApprovalView>> => {
       try {
         const p = await getProvider();
-        return ok(await p.getApprovalView(repositoryName, pullRequestId));
+        return ok(
+          await p.getApprovalView(repositoryName, pullRequestId, opts),
+        );
       } catch (err) {
         return fail(err);
       }
@@ -417,10 +433,13 @@ export function registerIpc(): void {
       _e,
       repositoryName: string,
       pullRequestId: string,
+      opts?: { forceFresh?: boolean },
     ): Promise<IpcResult<PullRequestMergeability>> => {
       try {
         const p = await getProvider();
-        return ok(await p.getMergeability(repositoryName, pullRequestId));
+        return ok(
+          await p.getMergeability(repositoryName, pullRequestId, opts),
+        );
       } catch (err) {
         return fail(err);
       }
@@ -457,4 +476,48 @@ export function registerIpc(): void {
       }
     },
   );
+
+  // ---- cache invalidation --------------------------------------------
+  ipcMain.handle(
+    IPC.cacheInvalidatePr,
+    async (
+      _e,
+      repositoryName: string,
+      pullRequestId: string,
+    ): Promise<IpcResult<void>> => {
+      try {
+        const p = await getProvider();
+        await p.invalidatePullRequest(repositoryName, pullRequestId);
+        return ok(undefined);
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IPC.cacheInvalidateRepo,
+    async (_e, repositoryName: string): Promise<IpcResult<void>> => {
+      try {
+        const p = await getProvider();
+        await p.invalidateRepository(repositoryName);
+        return ok(undefined);
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  ipcMain.handle(IPC.cacheClearAll, async (): Promise<IpcResult<void>> => {
+    try {
+      // We deliberately call the cache module directly instead of going
+      // through the provider — even if no provider is configured yet (e.g.
+      // misconfigured credentials), the user must still be able to wipe
+      // the disk cache from Settings.
+      await clearAllCaches();
+      return ok(undefined);
+    } catch (err) {
+      return fail(err);
+    }
+  });
 }
