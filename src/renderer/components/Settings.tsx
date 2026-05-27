@@ -119,7 +119,7 @@ export function Settings({
               {profiles.map((p) => (
                 <option key={p.name} value={p.name}>
                   {p.name}
-                  {p.region ? ` — ${p.region}` : ''}
+                  {p.region ? ` · ${p.region}` : ''}
                 </option>
               ))}
             </select>
@@ -145,7 +145,7 @@ export function Settings({
             <option value="">(none)</option>
             {AWS_CODECOMMIT_REGIONS.map((r) => (
               <option key={r.id} value={r.id}>
-                {r.id} — {r.label}
+                {r.id} · {r.label}
               </option>
             ))}
           </select>
@@ -288,9 +288,9 @@ function KeysPanel({
   return (
     <section className="keys-edit">
       <div className="hint">
-        Paste the “Option 1: Set AWS environment variables” block from the AWS
-        access portal. The values are encrypted with your OS keychain via
-        Electron <code>safeStorage</code> and never shown again.
+        Paste the {'"'}Option 1: Set AWS environment variables{'"'} block from
+        the AWS access portal. The values are encrypted with your OS keychain
+        via Electron <code>safeStorage</code> and never shown again.
       </div>
       <textarea
         value={text}
@@ -309,7 +309,7 @@ export AWS_SESSION_TOKEN="..."`}
           </span>
         ) : text.trim() ? (
           <span className="hint warn">
-            Couldn’t find AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in the
+            Could not find AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in the
             pasted text.
           </span>
         ) : (

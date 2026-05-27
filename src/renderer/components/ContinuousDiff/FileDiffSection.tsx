@@ -232,7 +232,7 @@ function FileDiffSectionImpl({
             <span className="hint">← {entry.beforePath}</span>
           )}
         {autoCollapsed && collapsed && totalLines > 0 && (
-          <span className="hint" title="Large diff — collapsed by default. Click ▶ to render.">
+          <span className="hint" title="Large diff. Collapsed by default; click ▶ to render.">
             large diff ({totalLines.toLocaleString()} lines)
           </span>
         )}
@@ -248,7 +248,7 @@ function FileDiffSectionImpl({
             checked={reviewed}
             onChange={(e) => callbacks.onToggleReviewed(entry, e.target.checked)}
           />
-          Viewed
+          Reviewed
         </label>
       </header>
       {!collapsed && (
@@ -266,7 +266,7 @@ function FileDiffSectionImpl({
               Loading diff…
             </div>
           ) : renderDiff.binary ? (
-            <div className="empty">Binary file — diff not rendered.</div>
+            <div className="empty">Binary file. Diff not rendered.</div>
           ) : renderDiff.hunks.length === 0 ? (
             <div className="empty">
               {entry.changeType === 'A'

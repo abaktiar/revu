@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import type { PullRequestSummary } from '@shared/types';
 
 type SortKey = 'id' | 'title' | 'author' | 'lastActivityAt' | 'createdAt';
@@ -12,6 +12,7 @@ interface Props {
 export function PRList({ prs, onOpen }: Props): JSX.Element {
   const [sortKey, setSortKey] = useState<SortKey>('lastActivityAt');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
+  const tbodyRef = useRef<HTMLTableSectionElement | null>(null);
 
   const sorted = useMemo(() => {
     const copy = [...prs];
@@ -26,6 +27,52 @@ export function PRList({ prs, onOpen }: Props): JSX.Element {
       setSortDir(key === 'title' || key === 'id' ? 'asc' : 'desc');
     }
   }
+
+  // Move keyboard focus between PR rows. ArrowUp/Down + j/k cycle through the
+  // focusable <tr> elements inside <tbody>. Wraps at top/bottom so j past the
+  // last row returns to the first; matches how engineers expect a list to feel.
+  const focusRow = useCallback((delta: number): void => {
+    const tbody = tbodyRef.current;
+    if (!tbody) return;
+    const rows = Array.from(
+      tbody.querySelectorAll<HTMLTableRowElement>('tr[tabindex="0"]'),
+    );
+    if (rows.length === 0) return;
+    const active = document.activeElement as HTMLElement | null;
+    const idx = active ? rows.indexOf(active as HTMLTableRowElement) : -1;
+    let next: number;
+    if (idx === -1) {
+      next = delta > 0 ? 0 : rows.length - 1;
+    } else {
+      next = (idx + delta + rows.length) % rows.length;
+    }
+    rows[next]?.focus();
+  }, []);
+
+  const onRowKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLTableRowElement>, pr: PullRequestSummary): void => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        onOpen?.(pr);
+      } else if (e.key === 'ArrowDown' || e.key === 'j') {
+        e.preventDefault();
+        focusRow(1);
+      } else if (e.key === 'ArrowUp' || e.key === 'k') {
+        e.preventDefault();
+        focusRow(-1);
+      } else if (e.key === 'Home') {
+        e.preventDefault();
+        const tbody = tbodyRef.current;
+        tbody?.querySelector<HTMLTableRowElement>('tr[tabindex="0"]')?.focus();
+      } else if (e.key === 'End') {
+        e.preventDefault();
+        const tbody = tbodyRef.current;
+        const rows = tbody?.querySelectorAll<HTMLTableRowElement>('tr[tabindex="0"]');
+        rows?.[rows.length - 1]?.focus();
+      }
+    },
+    [onOpen, focusRow],
+  );
 
   if (prs.length === 0) {
     return <div className="empty">No pull requests match the current filters.</div>;
@@ -43,12 +90,16 @@ export function PRList({ prs, onOpen }: Props): JSX.Element {
           <Th label="Updated" k="lastActivityAt" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
         </tr>
       </thead>
-      <tbody>
+      <tbody ref={tbodyRef}>
         {sorted.map((pr) => (
           <tr
             key={pr.id}
             className="clickable"
+            tabIndex={0}
+            role="button"
+            aria-label={`Pull request ${pr.id}: ${pr.title}`}
             onClick={() => onOpen?.(pr)}
+            onKeyDown={(e) => onRowKeyDown(e, pr)}
           >
             <td className="id">#{pr.id}</td>
             <td>{pr.title}</td>
@@ -82,7 +133,20 @@ function Th(props: {
 }): JSX.Element {
   const active = props.sortKey === props.k;
   return (
-    <th onClick={() => props.onClick(props.k)}>
+    <th
+      tabIndex={0}
+      role="button"
+      aria-sort={
+        active ? (props.sortDir === 'asc' ? 'ascending' : 'descending') : 'none'
+      }
+      onClick={() => props.onClick(props.k)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          props.onClick(props.k);
+        }
+      }}
+    >
       {props.label}
       {active && <span className="arrow">{props.sortDir === 'asc' ? '▲' : '▼'}</span>}
     </th>

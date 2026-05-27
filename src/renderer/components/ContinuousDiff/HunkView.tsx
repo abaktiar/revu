@@ -338,7 +338,6 @@ function ComposerRow({
               relativeFileVersion: location.side,
               content,
             });
-            onClose();
           }}
           onDeleteDraft={async () => {
             if (existing) await callbacks.onDeleteDraft(existing.id);

@@ -159,7 +159,12 @@ export const ContinuousDiff = forwardRef<ContinuousDiffHandle, Props>(
         ): void => {
           const el = nodesRef.current.get(path);
           if (!el) return;
-          el.scrollIntoView(opts ?? { behavior: 'smooth', block: 'start' });
+          const reduced = window.matchMedia(
+            '(prefers-reduced-motion: reduce)',
+          ).matches;
+          el.scrollIntoView(
+            opts ?? { behavior: reduced ? 'auto' : 'smooth', block: 'start' },
+          );
         };
         const scrollToFileBy = (offset: number): void => {
           const ordered = orderRef.current;

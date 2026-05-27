@@ -286,8 +286,9 @@ export function PRDetail({
   }, []);
 
   const onSidebarSelect = useCallback((file: FileDiffEntry): void => {
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     diffRef.current?.scrollToFile(file.path, {
-      behavior: 'smooth',
+      behavior: reduced ? 'auto' : 'smooth',
       block: 'start',
     });
   }, []);
@@ -527,7 +528,7 @@ function Toolbar({
       </button>
       {generalCount > 0 && (
         <button onClick={onToggleGeneral}>
-          {showGeneral ? 'Hide' : 'Show'} general ({generalCount})
+          {showGeneral ? 'Hide' : 'Show'} general comments ({generalCount})
         </button>
       )}
       {approval &&

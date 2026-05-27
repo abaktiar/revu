@@ -370,6 +370,13 @@ table.prs tbody tr:hover {
   background: var(--panel-2);
 }
 
+table.prs tbody tr:focus-visible,
+table.prs th:focus-visible {
+  outline: none;
+  background: var(--panel-2);
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
 .id {
   color: var(--text-dim);
   font-family: ui-monospace, 'SF Mono', Menlo, monospace;
@@ -487,7 +494,7 @@ table.prs tbody tr:hover {
 .md-body blockquote {
   margin: 0 0 8px;
   padding: 0 12px;
-  border-left: 3px solid var(--border);
+  border-left: 1px solid var(--border);
   color: var(--text-dim);
 }
 
@@ -743,7 +750,7 @@ table.prs tbody tr:hover {
 .badge-count {
   background: var(--accent-fade);
   color: var(--accent);
-  font-size: 10px;
+  font-size: 11px;
   padding: 1px 6px;
   border-radius: 999px;
   margin-left: auto;
@@ -799,7 +806,7 @@ table.prs tbody tr:hover {
 
 .kbd-hint {
   color: var(--text-dim);
-  font-size: 10px;
+  font-size: 11px;
 }
 
 kbd {
@@ -810,7 +817,7 @@ kbd {
   border-bottom-width: 2px;
   border-radius: 3px;
   font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-  font-size: 10px;
+  font-size: 11px;
   color: var(--text);
 }
 
@@ -855,7 +862,7 @@ kbd {
 
 .pr-meta-label {
   color: var(--text-dim);
-  font-size: 10px;
+  font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
   min-width: 80px;
@@ -897,7 +904,7 @@ kbd {
   border: 1px solid var(--border);
   border-radius: 3px;
   padding: 1px 5px;
-  font-size: 10px;
+  font-size: 11px;
   color: var(--text-dim);
 }
 
@@ -971,7 +978,7 @@ kbd {
 .file-collapse {
   width: 24px;
   padding: 2px 0;
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1;
 }
 
@@ -1007,7 +1014,7 @@ kbd {
 }
 
 .hunk-header {
-  background: rgba(91, 141, 239, 0.1);
+  background: var(--panel-2);
   color: var(--text-dim);
   padding: 4px 12px;
   border-top: 1px solid var(--border);
@@ -1429,6 +1436,12 @@ table.prs tr.clickable {
   background: rgba(255, 255, 255, 0.045);
 }
 
+.platform-darwin table.prs tbody tr:focus-visible,
+.platform-darwin table.prs th:focus-visible {
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 0 0 2px rgba(127, 166, 255, 0.7);
+}
+
 .platform-darwin .file-sidebar {
   background: rgba(24, 29, 38, 0.56);
   -webkit-backdrop-filter: blur(34px) saturate(1.5);
@@ -1579,5 +1592,31 @@ table.prs tr.clickable {
     background: #161a22;
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
+  }
+
+  /* The macOS ambient card shadow only earns its keep when the surfaces it
+   * lifts are translucent. Once vibrancy is off, the same shadow on an opaque
+   * dark panel reads as the brand-banned "shadow on dark." Drop it. */
+  .platform-darwin .file-section,
+  .platform-darwin .inline-composer,
+  .platform-darwin .inline-thread,
+  .platform-darwin .thread-flat,
+  .platform-darwin .reply-box,
+  .platform-darwin .composer {
+    box-shadow: none;
+  }
+}
+
+/* Honor prefers-reduced-motion. PRODUCT.md commits to this; DESIGN.md flags
+ * the gap. The transitions on buttons (150ms bg/border/shadow, 80ms transform)
+ * and table rows (140ms bg) flatten under user preference. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
   }
 }

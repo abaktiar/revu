@@ -101,6 +101,32 @@ export function App(): JSX.Element {
     [prs, filters],
   );
 
+  // List-level keyboard shortcuts. Only active when the list view is on screen
+  // and the user isn't typing into a field; `/` focuses the title-or-author
+  // filter, Esc clears it when populated. These are the small power-user beats
+  // that PRODUCT.md commits to but the mouse-only flow couldn't deliver.
+  useEffect(() => {
+    if (view.kind !== 'list') return;
+    function onKey(e: KeyboardEvent): void {
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      const isTyping = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+      if (e.key === '/' && !isTyping) {
+        const el = document.querySelector<HTMLInputElement>(
+          '.filters input[type="search"]',
+        );
+        if (el) {
+          e.preventDefault();
+          el.focus();
+          el.select();
+        }
+      } else if (e.key === 'Escape' && isTyping && filters.search) {
+        setFilters((f) => ({ ...f, search: '' }));
+      }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [view.kind, filters.search]);
+
   if (!settings) {
     return <div className="loading">Loading settings…</div>;
   }
