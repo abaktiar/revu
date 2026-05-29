@@ -12,3 +12,4 @@ dist/
 !.vscode/settings.json
 .impeccable/critique/*
 release
+*.tsbuildinfo
