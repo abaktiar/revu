@@ -5,8 +5,10 @@ import type {
   CommentThread,
   FileDiffEntry,
   MergeabilityState,
+  MergeOptionId,
   PostCommentInput,
   PRDifferences,
+  PRStatus,
   PullRequestApprovalView,
   PullRequestCommit,
   PullRequestDetail,
@@ -28,6 +30,8 @@ import type {
 import { PRMetadata } from './PRMetadata';
 import { Markdown } from './Markdown';
 import { ErrorBanner } from './ErrorBanner';
+import { MergeDialog, EditPRDialog } from './PRDialogs';
+import { FileFinder } from './FileFinder';
 import type { SidebarTab } from './FileSidebar';
 
 // Stable empty refs used when switching to commit view so memoized children
@@ -66,6 +70,14 @@ export function PRDetail({
   const [showGeneral, setShowGeneral] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshToken, setRefreshToken] = useState(0);
+  // PR-mutation UI state: which action (if any) is in flight, and whether the
+  // merge / edit dialogs are open.
+  const [actionBusy, setActionBusy] = useState<
+    null | 'merge' | 'status' | 'edit'
+  >(null);
+  const [mergeOpen, setMergeOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [finderOpen, setFinderOpen] = useState(false);
   // ---- View mode -----------------------------------------------------
   // Default view is the PR's full diff. Selecting a commit in the sidebar
   // switches to viewing that single commit's diff (parent → commit). The
@@ -494,9 +506,101 @@ export function PRDetail({
     [repositoryName, pullRequest.id],
   );
 
+  // Re-read mergeability from AWS after a state-changing action. Best-effort:
+  // a merge/close flips the badge, but the detail refetch already carries the
+  // authoritative status, so a failure here just leaves a slightly stale badge.
+  const reloadMergeability = useCallback(async (): Promise<void> => {
+    try {
+      const m = await unwrap(
+        api.mergeability.get(repositoryName, pullRequest.id, {
+          forceFresh: true,
+        }),
+      );
+      setMergeability(m);
+    } catch {
+      // best-effort
+    }
+  }, [repositoryName, pullRequest.id]);
+
+  const doMerge = useCallback(
+    async (strategy: MergeOptionId, commitMessage: string): Promise<void> => {
+      setActionBusy('merge');
+      try {
+        const updated = await unwrap(
+          api.prs.merge({
+            repositoryName,
+            pullRequestId: pullRequest.id,
+            strategy,
+            commitMessage,
+          }),
+        );
+        setDetail(updated);
+        setMergeOpen(false);
+        await reloadMergeability();
+      } catch (err) {
+        setLoadError(err);
+      } finally {
+        setActionBusy(null);
+      }
+    },
+    [repositoryName, pullRequest.id, reloadMergeability],
+  );
+
+  const doSetStatus = useCallback(
+    async (status: PRStatus): Promise<void> => {
+      setActionBusy('status');
+      try {
+        const updated = await unwrap(
+          api.prs.setStatus(repositoryName, pullRequest.id, status),
+        );
+        setDetail(updated);
+        await reloadMergeability();
+      } catch (err) {
+        setLoadError(err);
+      } finally {
+        setActionBusy(null);
+      }
+    },
+    [repositoryName, pullRequest.id, reloadMergeability],
+  );
+
+  const doUpdate = useCallback(
+    async (title: string, description: string): Promise<void> => {
+      setActionBusy('edit');
+      try {
+        const updated = await unwrap(
+          api.prs.update({
+            repositoryName,
+            pullRequestId: pullRequest.id,
+            title,
+            description,
+          }),
+        );
+        setDetail(updated);
+        setEditOpen(false);
+      } catch (err) {
+        setLoadError(err);
+      } finally {
+        setActionBusy(null);
+      }
+    },
+    [repositoryName, pullRequest.id],
+  );
+
   // ---- Keyboard navigation -------------------------------------------
   useEffect(() => {
     function onKey(e: KeyboardEvent): void {
+      if (
+        (e.metaKey || e.ctrlKey) &&
+        !e.shiftKey &&
+        !e.altKey &&
+        (e.key === 'p' || e.key === 'P')
+      ) {
+        // Cmd/Ctrl+P → fuzzy file finder. Intercept before the browser's print.
+        e.preventDefault();
+        setFinderOpen(true);
+        return;
+      }
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
       if (e.key === 'j') {
@@ -527,6 +631,11 @@ export function PRDetail({
     onToggleMeta: () => setMetaOpen((v) => !v),
     refreshing,
     onRefresh: () => void onRefresh(),
+    actionBusy,
+    onMerge: () => setMergeOpen(true),
+    onEdit: () => setEditOpen(true),
+    onClose: () => void doSetStatus('CLOSED'),
+    onReopen: () => void doSetStatus('OPEN'),
   };
 
   if (loadError) {
@@ -672,6 +781,32 @@ export function PRDetail({
           </aside>
         )}
       </div>
+      {mergeOpen && mergeability && (
+        <MergeDialog
+          mergeability={mergeability}
+          busy={actionBusy === 'merge'}
+          onCancel={() => setMergeOpen(false)}
+          onMerge={(strategy, commitMessage) =>
+            void doMerge(strategy, commitMessage)
+          }
+        />
+      )}
+      {editOpen && detail && (
+        <EditPRDialog
+          initialTitle={detail.title}
+          initialDescription={detail.description ?? ''}
+          busy={actionBusy === 'edit'}
+          onCancel={() => setEditOpen(false)}
+          onSave={(title, description) => void doUpdate(title, description)}
+        />
+      )}
+      {finderOpen && (
+        <FileFinder
+          files={currentDiff?.files ?? differences.files}
+          onSelect={onSidebarSelect}
+          onClose={() => setFinderOpen(false)}
+        />
+      )}
     </div>
   );
 }
@@ -692,6 +827,11 @@ function Toolbar({
   onToggleMeta,
   refreshing,
   onRefresh,
+  actionBusy,
+  onMerge,
+  onEdit,
+  onClose,
+  onReopen,
 }: {
   pr: PullRequestSummary;
   detail: PullRequestDetail | null;
@@ -708,7 +848,19 @@ function Toolbar({
   onToggleMeta: () => void;
   refreshing: boolean;
   onRefresh: () => void;
+  actionBusy: null | 'merge' | 'status' | 'edit';
+  onMerge: () => void;
+  onEdit: () => void;
+  onClose: () => void;
+  onReopen: () => void;
 }): JSX.Element {
+  const isOpen = detail?.status === 'OPEN';
+  const isMerged = detail?.mergeState === 'MERGED';
+  const canMerge = isOpen && mergeability?.state === 'mergeable';
+  const canEdit = isOpen;
+  const canClose = isOpen && !isMerged;
+  const canReopen = detail?.status === 'CLOSED' && !isMerged;
+  const busyAny = actionBusy !== null;
   const approvedCount =
     approval?.states.filter((s) => s.approvalState === 'APPROVE').length ?? 0;
 
@@ -754,16 +906,36 @@ function Toolbar({
           {showGeneral ? 'Hide' : 'Show'} general comments ({generalCount})
         </button>
       )}
+      {canEdit && (
+        <button onClick={onEdit} disabled={busyAny} title="Edit title and description">
+          Edit
+        </button>
+      )}
+      {canClose && (
+        <button onClick={onClose} disabled={busyAny}>
+          {actionBusy === 'status' ? 'Working…' : 'Close'}
+        </button>
+      )}
+      {canReopen && (
+        <button onClick={onReopen} disabled={busyAny}>
+          {actionBusy === 'status' ? 'Working…' : 'Reopen'}
+        </button>
+      )}
       {approval &&
         (approval.selfApproved ? (
           <button onClick={onRevoke} disabled={approvalBusy}>
             {approvalBusy ? 'Revoking…' : 'Revoke approval'}
           </button>
         ) : (
-          <button className="primary" onClick={onApprove} disabled={approvalBusy}>
+          <button onClick={onApprove} disabled={approvalBusy}>
             {approvalBusy ? 'Approving…' : 'Approve'}
           </button>
         ))}
+      {canMerge && (
+        <button className="primary" onClick={onMerge} disabled={busyAny}>
+          {actionBusy === 'merge' ? 'Merging…' : 'Merge'}
+        </button>
+      )}
     </div>
   );
 }

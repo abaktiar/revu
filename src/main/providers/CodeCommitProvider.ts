@@ -14,6 +14,9 @@ import {
   GetMergeOptionsCommand,
   GetPullRequestApprovalStatesCommand,
   GetPullRequestCommand,
+  MergePullRequestByFastForwardCommand,
+  MergePullRequestBySquashCommand,
+  MergePullRequestByThreeWayCommand,
   type Comment as CCComment,
   type CommentsForPullRequest,
   GetDifferencesCommand,
@@ -23,6 +26,9 @@ import {
   PostCommentForPullRequestCommand,
   PostCommentReplyCommand,
   UpdatePullRequestApprovalStateCommand,
+  UpdatePullRequestDescriptionCommand,
+  UpdatePullRequestStatusCommand,
+  UpdatePullRequestTitleCommand,
   type Difference,
   type PullRequest,
   type PullRequestEvent,
@@ -53,6 +59,7 @@ import type {
   ListPRsFilter,
   ListSessionResult,
   MergeOptionId,
+  MergePullRequestInput,
   MergeState,
   PostCommentInput,
   PostReplyInput,
@@ -66,6 +73,7 @@ import type {
   PullRequestTarget,
   RelativeFileVersion,
   RepositorySummary,
+  UpdatePullRequestInput,
 } from '@shared/types';
 import {
   decodeFile,
@@ -1193,6 +1201,102 @@ async getMergeability(
     return this.getApprovalView(repositoryName, pullRequestId, {
       forceFresh: true,
     });
+  }
+
+  // ---- PR mutations (merge / status / edit) -----------------------------
+
+  async mergePullRequest(
+    input: MergePullRequestInput,
+  ): Promise<PullRequestSummary> {
+    const { repositoryName, pullRequestId, strategy } = input;
+    const commitMessage = nonEmpty(input.commitMessage);
+    if (strategy === 'FAST_FORWARD_MERGE') {
+      await this.cc(
+        'MergePullRequestByFastForward',
+        { pullRequestId, repositoryName },
+        (i) => this.client.send(new MergePullRequestByFastForwardCommand(i)),
+      );
+    } else if (strategy === 'SQUASH_MERGE') {
+      await this.cc(
+        'MergePullRequestBySquash',
+        { pullRequestId, repositoryName, commitMessage },
+        (i) => this.client.send(new MergePullRequestBySquashCommand(i)),
+      );
+    } else {
+      await this.cc(
+        'MergePullRequestByThreeWay',
+        { pullRequestId, repositoryName, commitMessage },
+        (i) => this.client.send(new MergePullRequestByThreeWayCommand(i)),
+      );
+    }
+    return this.refreshSummaryAfterMutation(repositoryName, pullRequestId);
+  }
+
+  async setPullRequestStatus(
+    repositoryName: string,
+    pullRequestId: string,
+    status: PRStatus,
+  ): Promise<PullRequestSummary> {
+    await this.cc(
+      'UpdatePullRequestStatus',
+      { pullRequestId, pullRequestStatus: status },
+      (i) => this.client.send(new UpdatePullRequestStatusCommand(i)),
+    );
+    return this.refreshSummaryAfterMutation(repositoryName, pullRequestId);
+  }
+
+  async updatePullRequest(
+    input: UpdatePullRequestInput,
+  ): Promise<PullRequestSummary> {
+    const { repositoryName, pullRequestId } = input;
+    const title = input.title?.trim();
+    // CodeCommit splits title and description into separate APIs. Issue only
+    // the call(s) for the field(s) the caller actually wants to change.
+    if (title !== undefined) {
+      if (title.length === 0) {
+        throw new ProviderError({
+          message: 'Pull request title cannot be empty.',
+          code: 'unknown',
+          hint: 'Enter a title before saving.',
+        });
+      }
+      await this.cc(
+        'UpdatePullRequestTitle',
+        { pullRequestId, title },
+        (i) => this.client.send(new UpdatePullRequestTitleCommand(i)),
+      );
+    }
+    if (input.description !== undefined) {
+      await this.cc(
+        'UpdatePullRequestDescription',
+        { pullRequestId, description: input.description },
+        (i) => this.client.send(new UpdatePullRequestDescriptionCommand(i)),
+      );
+    }
+    return this.refreshSummaryAfterMutation(repositoryName, pullRequestId);
+  }
+
+  // Shared post-mutation step: drop the caches a PR-state change invalidates,
+  // re-fetch the PR fresh, re-map it, and reseed the detail cache so the next
+  // navigation is instant. Returns the updated summary for the caller to apply
+  // optimistically.
+  private async refreshSummaryAfterMutation(
+    repositoryName: string,
+    pullRequestId: string,
+  ): Promise<PullRequestSummary> {
+    await Promise.all([
+      invalidateCached(NS.prDetail, prDetailKey(pullRequestId)),
+      invalidateCached(
+        NS.mergeability,
+        mergeabilityKey(repositoryName, pullRequestId),
+      ),
+      invalidateNamespace(NS.prList),
+    ]);
+    const pr = await this.fetchRawPullRequest(pullRequestId, true);
+    const approvalState = await this.evaluateApproval(pr);
+    const summary = mapPullRequest(pr, approvalState);
+    await putCached(NS.prDetail, prDetailKey(pullRequestId), summary, LIMITS.prDetail);
+    return summary;
   }
 
   private async fetchApprovalStates(

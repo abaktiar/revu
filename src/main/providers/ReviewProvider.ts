@@ -13,9 +13,11 @@ import type {
   FileDiffEntry,
   FilePair,
   ListPRsFilter,
+  MergePullRequestInput,
   PostCommentInput,
   PostReplyInput,
   PRDifferences,
+  PRStatus,
   ListSessionResult,
   PullRequestApprovalView,
   PullRequestCommit,
@@ -23,6 +25,7 @@ import type {
   PullRequestMergeability,
   PullRequestSummary,
   RepositorySummary,
+  UpdatePullRequestInput,
 } from '@shared/types';
 
 // Pass `{ forceFresh: true }` from the renderer's Refresh button to skip the
@@ -183,6 +186,25 @@ export interface ReviewProvider {
     pullRequestId: string,
     opts?: ReadOptions,
   ): Promise<PullRequestMergeability>;
+
+  // Merge the pull request using one of the strategies reported by
+  // getMergeability. Implementations MUST invalidate the PR's detail/list/
+  // mergeability caches so the merged state shows immediately. Returns the
+  // updated summary (status/mergeState reflect the merge).
+  mergePullRequest(input: MergePullRequestInput): Promise<PullRequestSummary>;
+
+  // Close (status='CLOSED') or reopen (status='OPEN') a pull request without
+  // merging it. Invalidates the same caches as a merge. Returns the updated
+  // summary.
+  setPullRequestStatus(
+    repositoryName: string,
+    pullRequestId: string,
+    status: PRStatus,
+  ): Promise<PullRequestSummary>;
+
+  // Edit a pull request's title and/or description. Only the provided fields
+  // are changed. Invalidates detail/list caches. Returns the updated summary.
+  updatePullRequest(input: UpdatePullRequestInput): Promise<PullRequestSummary>;
 
   // Deep-link to the provider's own web UI for a given pull request. Used by
   // the "View on AWS" button and similar — the renderer hands it to

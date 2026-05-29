@@ -13,6 +13,15 @@ import { PRDetail } from './components/PRDetail';
 import { CreatePR } from './components/CreatePR';
 import { KeyboardHelpOverlay } from './components/KeyboardHelpOverlay';
 import { ErrorBanner } from './components/ErrorBanner';
+import { SyntheticDiffView } from './components/SyntheticDiffView';
+import { RepoSwitcher } from './components/RepoSwitcher';
+import './extra.css';
+
+// Vite injects import.meta.env.DEV; it isn't in the renderer's TS lib (types:
+// ["node"]), so read it through a cast rather than adding vite/client types.
+const IS_DEV = Boolean(
+  (import.meta as unknown as { env?: { DEV?: boolean } }).env?.DEV,
+);
 
 // Page size for the historical (closed/merged/all) PR loads. CodeCommit
 // returns IDs newest-first, so this is "the next 100 most recent." Open
@@ -29,7 +38,9 @@ const DEFAULT_FILTERS: FilterState = {
 type View =
   | { kind: 'list' }
   | { kind: 'detail'; pr: PullRequestSummary }
-  | { kind: 'create' };
+  | { kind: 'create' }
+  // Dev-only synthetic large-diff performance harness (Cmd/Ctrl+Shift+D).
+  | { kind: 'perf' };
 
 // Live state of an in-flight streaming PR-list session. Mirrors the
 // item-event payload's `loaded`/`total` so the loading chip can render a
@@ -238,6 +249,58 @@ export function App(): JSX.Element {
     void api.prs.cancelList(sid).catch(() => {});
   }, []);
 
+  // Switch the active repository from the topbar. Persists the choice, resets
+  // the list, and immediately streams the new repo's PRs. We read the new repo
+  // name directly (not via the refresh closure, which would still hold the old
+  // settings on this tick).
+  const switchRepo = useCallback(
+    async (name: string): Promise<void> => {
+      if (!settings || name === settings.repositoryName) return;
+      const prior = sessionIdRef.current;
+      if (prior) void api.prs.cancelList(prior).catch(() => {});
+      sessionIdRef.current = null;
+      setPrs([]);
+      setError(null);
+      setTruncated(false);
+      setLastId(undefined);
+      setLoading(null);
+      try {
+        const saved = await unwrap(
+          api.settings.set({ ...settings, repositoryName: name }),
+        );
+        setSettings(saved);
+      } catch (err) {
+        setError(err);
+        return;
+      }
+      const sessionId = crypto.randomUUID();
+      sessionIdRef.current = sessionId;
+      setLoading({ sessionId, loaded: 0, total: 0, kind: 'initial' });
+      try {
+        await unwrap(api.cache.invalidateRepo(name));
+        await unwrap(
+          api.prs.startList({
+            sessionId,
+            repositoryName: name,
+            filter: {
+              status: statusForApi(filters.status),
+              limit:
+                filters.status === 'OPEN' ? undefined : HISTORICAL_PAGE,
+            },
+            forceFresh: true,
+          }),
+        );
+      } catch (err) {
+        if (sessionIdRef.current === sessionId) {
+          setError(err);
+          setLoading(null);
+          sessionIdRef.current = null;
+        }
+      }
+    },
+    [settings, filters.status],
+  );
+
   // Status change → cancel any in-flight session and reset the list. We
   // don't auto-trigger a refresh; the user clicks Refresh when they're ready
   // to spend the API calls on the new status.
@@ -327,8 +390,33 @@ export function App(): JSX.Element {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  // Dev-only: toggle the synthetic 50k-line perf harness with Cmd/Ctrl+Shift+D.
+  useEffect(() => {
+    if (!IS_DEV) return;
+    function onKey(e: KeyboardEvent): void {
+      if (
+        (e.metaKey || e.ctrlKey) &&
+        e.shiftKey &&
+        (e.key === 'd' || e.key === 'D')
+      ) {
+        e.preventDefault();
+        setView((v) => (v.kind === 'perf' ? { kind: 'list' } : { kind: 'perf' }));
+      }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   if (!settings) {
     return <div className="loading">Loading settings…</div>;
+  }
+
+  if (view.kind === 'perf') {
+    return (
+      <div className="app">
+        <SyntheticDiffView onBack={() => setView({ kind: 'list' })} />
+      </div>
+    );
   }
 
   if (view.kind === 'detail' && settings.repositoryName) {
@@ -377,6 +465,11 @@ export function App(): JSX.Element {
     <div className="app">
       <div className="topbar">
         <div className="brand">revu</div>
+        <RepoSwitcher
+          current={settings.repositoryName}
+          favorites={settings.favoriteRepos}
+          onSwitch={(name) => void switchRepo(name)}
+        />
         <span className="grow" />
         <SettingsSummary settings={settings} />
         <button
