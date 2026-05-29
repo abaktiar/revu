@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, shell } from 'electron';
+import { app, BrowserWindow, Menu, nativeImage, shell } from 'electron';
 import type { MenuItemConstructorOptions } from 'electron';
 import { join } from 'node:path';
 import { registerIpc } from './ipc';
@@ -9,6 +9,13 @@ const { autoUpdater } = updater;
 
 const isDev = !app.isPackaged;
 const isMac = process.platform === 'darwin';
+
+// Dev-only app icon. Packaged builds get the icon from the bundle (electron-builder
+// uses build/icon.*), but in dev the dock/taskbar would otherwise show the generic
+// Electron icon. Resolve the source PNG relative to the compiled main entry.
+const devIcon = isDev
+  ? nativeImage.createFromPath(join(__dirname, '../../build/icon.png'))
+  : undefined;
 
 // Channel used by the application menu's "File → New Pull Request" item to
 // tell the renderer to open the Create-PR flow. The renderer subscribes via
@@ -25,6 +32,7 @@ function createWindow(): void {
     minHeight: 600,
     show: false,
     title: 'revu',
+    ...(devIcon && !devIcon.isEmpty() ? { icon: devIcon } : {}),
     transparent: isMac,
     backgroundColor: isMac ? '#00000000' : '#0a0a0a',
     ...(isMac
@@ -111,6 +119,7 @@ function checkForUpdates(): void {
 }
 
 app.whenReady().then(() => {
+  if (isMac && devIcon && !devIcon.isEmpty()) app.dock?.setIcon(devIcon);
   Menu.setApplicationMenu(buildMenu());
   registerIpc();
   createWindow();
