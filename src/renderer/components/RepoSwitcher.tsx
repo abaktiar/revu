@@ -38,7 +38,10 @@ export function RepoSwitcher({ current, favorites, onSwitch }: Props): JSX.Eleme
   }
 
   useEffect(() => {
-    if (open && repos.length === 0 && !loading && !error) {
+    // Retry on every (re)open while we still have nothing — a transient failure
+    // shouldn't permanently wedge the menu. `error` is intentionally NOT part of
+    // the guard: a prior failure must not block the next attempt.
+    if (open && repos.length === 0 && !loading) {
       void loadRepos();
     }
     if (open) {

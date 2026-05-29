@@ -75,6 +75,10 @@ export function PRDetail({
   const [actionBusy, setActionBusy] = useState<
     null | 'merge' | 'status' | 'edit'
   >(null);
+  // Errors from PR mutations (merge/close/reopen/edit). Kept separate from
+  // `loadError` on purpose: a failed action must NOT replace the whole page
+  // with the load-failure view (which would also unmount the open dialog).
+  const [actionError, setActionError] = useState<unknown>(null);
   const [mergeOpen, setMergeOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [finderOpen, setFinderOpen] = useState(false);
@@ -525,6 +529,7 @@ export function PRDetail({
   const doMerge = useCallback(
     async (strategy: MergeOptionId, commitMessage: string): Promise<void> => {
       setActionBusy('merge');
+      setActionError(null);
       try {
         const updated = await unwrap(
           api.prs.merge({
@@ -532,23 +537,27 @@ export function PRDetail({
             pullRequestId: pullRequest.id,
             strategy,
             commitMessage,
+            // Pin to the source tip the user reviewed so a branch move can't
+            // silently merge unreviewed code.
+            sourceCommitId: differences?.afterCommitId,
           }),
         );
         setDetail(updated);
         setMergeOpen(false);
         await reloadMergeability();
       } catch (err) {
-        setLoadError(err);
+        setActionError(err);
       } finally {
         setActionBusy(null);
       }
     },
-    [repositoryName, pullRequest.id, reloadMergeability],
+    [repositoryName, pullRequest.id, reloadMergeability, differences?.afterCommitId],
   );
 
   const doSetStatus = useCallback(
     async (status: PRStatus): Promise<void> => {
       setActionBusy('status');
+      setActionError(null);
       try {
         const updated = await unwrap(
           api.prs.setStatus(repositoryName, pullRequest.id, status),
@@ -556,7 +565,7 @@ export function PRDetail({
         setDetail(updated);
         await reloadMergeability();
       } catch (err) {
-        setLoadError(err);
+        setActionError(err);
       } finally {
         setActionBusy(null);
       }
@@ -567,6 +576,7 @@ export function PRDetail({
   const doUpdate = useCallback(
     async (title: string, description: string): Promise<void> => {
       setActionBusy('edit');
+      setActionError(null);
       try {
         const updated = await unwrap(
           api.prs.update({
@@ -579,7 +589,7 @@ export function PRDetail({
         setDetail(updated);
         setEditOpen(false);
       } catch (err) {
-        setLoadError(err);
+        setActionError(err);
       } finally {
         setActionBusy(null);
       }
@@ -590,6 +600,11 @@ export function PRDetail({
   // ---- Keyboard navigation -------------------------------------------
   useEffect(() => {
     function onKey(e: KeyboardEvent): void {
+      // Never hijack keys while the user is typing in a field — this guard sits
+      // above the Cmd/Ctrl+P handler so the finder won't pop while editing a
+      // comment, title, or filter.
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
       if (
         (e.metaKey || e.ctrlKey) &&
         !e.shiftKey &&
@@ -601,8 +616,6 @@ export function PRDetail({
         setFinderOpen(true);
         return;
       }
-      const tag = (e.target as HTMLElement | null)?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
       if (e.key === 'j') {
         e.preventDefault();
         diffRef.current?.scrollToFileBy(1);
@@ -665,6 +678,14 @@ export function PRDetail({
   return (
     <div className="pr-detail">
       <Toolbar {...toolbarProps} />
+      {actionError != null && !mergeOpen && !editOpen && (
+        <ErrorBanner
+          title="Action failed."
+          error={actionError}
+          onRetry={() => setActionError(null)}
+          retryLabel="Dismiss"
+        />
+      )}
       {metaOpen && (
         <PRMetadata
           detail={detail}
@@ -785,7 +806,11 @@ export function PRDetail({
         <MergeDialog
           mergeability={mergeability}
           busy={actionBusy === 'merge'}
-          onCancel={() => setMergeOpen(false)}
+          error={actionError}
+          onCancel={() => {
+            setActionError(null);
+            setMergeOpen(false);
+          }}
           onMerge={(strategy, commitMessage) =>
             void doMerge(strategy, commitMessage)
           }
@@ -796,7 +821,11 @@ export function PRDetail({
           initialTitle={detail.title}
           initialDescription={detail.description ?? ''}
           busy={actionBusy === 'edit'}
-          onCancel={() => setEditOpen(false)}
+          error={actionError}
+          onCancel={() => {
+            setActionError(null);
+            setEditOpen(false);
+          }}
           onSave={(title, description) => void doUpdate(title, description)}
         />
       )}
@@ -874,7 +903,7 @@ function Toolbar({
     <div className="pr-toolbar">
       <button onClick={onBack}>← Back</button>
       <span className="pr-title">
-        <span className="id">#{pr.id}</span> {pr.title}
+        <span className="id">#{pr.id}</span> {detail?.title ?? pr.title}
       </span>
       {showInlineBadges && detail && (
         <>

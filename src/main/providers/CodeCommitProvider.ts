@@ -1210,22 +1210,26 @@ async getMergeability(
   ): Promise<PullRequestSummary> {
     const { repositoryName, pullRequestId, strategy } = input;
     const commitMessage = nonEmpty(input.commitMessage);
+    // Pin the merge to the reviewed source tip when we have it. CodeCommit
+    // rejects the merge if the branch has advanced past this commit, so the
+    // user can never merge code they didn't review.
+    const sourceCommitId = nonEmpty(input.sourceCommitId);
     if (strategy === 'FAST_FORWARD_MERGE') {
       await this.cc(
         'MergePullRequestByFastForward',
-        { pullRequestId, repositoryName },
+        { pullRequestId, repositoryName, sourceCommitId },
         (i) => this.client.send(new MergePullRequestByFastForwardCommand(i)),
       );
     } else if (strategy === 'SQUASH_MERGE') {
       await this.cc(
         'MergePullRequestBySquash',
-        { pullRequestId, repositoryName, commitMessage },
+        { pullRequestId, repositoryName, commitMessage, sourceCommitId },
         (i) => this.client.send(new MergePullRequestBySquashCommand(i)),
       );
     } else {
       await this.cc(
         'MergePullRequestByThreeWay',
-        { pullRequestId, repositoryName, commitMessage },
+        { pullRequestId, repositoryName, commitMessage, sourceCommitId },
         (i) => this.client.send(new MergePullRequestByThreeWayCommand(i)),
       );
     }
