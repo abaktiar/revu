@@ -11,3 +11,4 @@ dist/
 !.vscode/extensions.json
 !.vscode/settings.json
 .impeccable/critique/*
+release
