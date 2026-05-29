@@ -456,6 +456,12 @@ export interface MergePullRequestInput {
   strategy: MergeOptionId;
   // Optional commit message for SQUASH / THREE_WAY merges (ignored for FF).
   commitMessage?: string;
+  // The source-branch tip the user actually reviewed (the diff's afterCommitId).
+  // Passed through to CodeCommit so a branch move between the mergeability check
+  // and the click can't merge code the reviewer never saw — the merge fails
+  // with a conflict/stale error instead. Omitted → CodeCommit merges the
+  // current tip (legacy behaviour).
+  sourceCommitId?: string;
 }
 
 export interface UpdatePullRequestInput {

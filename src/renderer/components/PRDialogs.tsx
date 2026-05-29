@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { MergeOptionId, PullRequestMergeability } from '@shared/types';
+import { ErrorBanner } from './ErrorBanner';
 
 // Shared modal shell: dim backdrop, centered card, Esc to cancel, focus trap to
 // the card. Used by the merge + edit dialogs.
@@ -67,11 +68,14 @@ const MERGE_DESC: Record<MergeOptionId, string> = {
 export function MergeDialog({
   mergeability,
   busy,
+  error,
   onCancel,
   onMerge,
 }: {
   mergeability: PullRequestMergeability;
   busy: boolean;
+  // A failed merge attempt, shown inline so the dialog stays open for a retry.
+  error?: unknown;
   onCancel: () => void;
   onMerge: (strategy: MergeOptionId, commitMessage: string) => void;
 }): JSX.Element {
@@ -116,6 +120,7 @@ export function MergeDialog({
           </label>
         )}
       </div>
+      {error != null && <ErrorBanner title="Merge failed." error={error} />}
       <div className="pr-dialog-actions">
         <button onClick={onCancel} disabled={busy}>
           Cancel
@@ -136,12 +141,15 @@ export function EditPRDialog({
   initialTitle,
   initialDescription,
   busy,
+  error,
   onCancel,
   onSave,
 }: {
   initialTitle: string;
   initialDescription: string;
   busy: boolean;
+  // A failed save, shown inline so the dialog stays open for a retry.
+  error?: unknown;
   onCancel: () => void;
   onSave: (title: string, description: string) => void;
 }): JSX.Element {
@@ -173,6 +181,7 @@ export function EditPRDialog({
           />
         </label>
       </div>
+      {error != null && <ErrorBanner title="Save failed." error={error} />}
       <div className="pr-dialog-actions">
         <button onClick={onCancel} disabled={busy}>
           Cancel
