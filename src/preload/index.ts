@@ -18,9 +18,11 @@ import type {
   IpcResult,
   ListPRsFilter,
   ManualCredentialsInput,
+  MergePullRequestInput,
   PostCommentInput,
   PostReplyInput,
   PRDifferences,
+  PRStatus,
   ListDoneEvent,
   ListErrorEvent,
   ListItemEvent,
@@ -33,6 +35,7 @@ import type {
   RepoBranchPrefs,
   RepositorySummary,
   ReviewedFile,
+  UpdatePullRequestInput,
 } from '@shared/types';
 
 const CH = {
@@ -53,6 +56,9 @@ const CH = {
   prsCommitDifferences: 'prs:commit-differences',
   prsRefDifferences: 'prs:ref-differences',
   prsCreate: 'prs:create',
+  prsMerge: 'prs:merge',
+  prsSetStatus: 'prs:set-status',
+  prsUpdate: 'prs:update',
   prsCommits: 'prs:commits',
   prsFilePair: 'prs:file-pair',
   prsFileDiff: 'prs:file-diff',
@@ -205,6 +211,20 @@ const api = {
       input: CreatePullRequestInput,
     ): Promise<IpcResult<PullRequestSummary>> =>
       ipcRenderer.invoke(CH.prsCreate, input),
+    merge: (
+      input: MergePullRequestInput,
+    ): Promise<IpcResult<PullRequestSummary>> =>
+      ipcRenderer.invoke(CH.prsMerge, input),
+    setStatus: (
+      repositoryName: string,
+      pullRequestId: string,
+      status: PRStatus,
+    ): Promise<IpcResult<PullRequestSummary>> =>
+      ipcRenderer.invoke(CH.prsSetStatus, repositoryName, pullRequestId, status),
+    update: (
+      input: UpdatePullRequestInput,
+    ): Promise<IpcResult<PullRequestSummary>> =>
+      ipcRenderer.invoke(CH.prsUpdate, input),
     filePair: (
       repositoryName: string,
       beforeBlobId: string | undefined,

@@ -13,11 +13,26 @@ line-anchored comments that sync back to CodeCommit.
 - **Electron** — chosen for consistent Chromium rendering on both OSes and proven
   ability to render very large diffs (VS Code is the existence proof).
 - **React + TypeScript** (strict mode) in the renderer.
-- **Monaco diff editor** — the core of the app. The product *is* a diff viewer.
-- **Node** in the main process for Git + AWS work.
+- **Custom continuous diff renderer** (`src/renderer/components/ContinuousDiff/`) —
+  the core of the app. The product *is* a diff viewer. A GitHub-style continuous
+  hunk view with lazy per-file + per-hunk mounting (IntersectionObserver),
+  auto-collapse of large files, and expand-context. **Monaco was the original
+  plan but was dropped** — the continuous view fits PR review better and the
+  per-hunk lazy mount gives us the huge-diff performance without Monaco's weight.
+  If you reintroduce Monaco, flag it: it is no longer a dependency.
+- **Node** in the main process for AWS work.
 - **AWS SDK for JavaScript v3** (`@aws-sdk/client-codecommit`).
-- **SQLite** (`better-sqlite3`) for local cache and draft comments.
-- System `git` binary (subprocess) for fetch/diff.
+- **JSON files** under Electron `userData` for local cache, drafts, reviewed-state,
+  and settings (`src/main/cache/jsonCache.ts`, `drafts.ts`, `reviewed.ts`,
+  `settings.ts`). **SQLite (`better-sqlite3`) was the original plan but was dropped**
+  — payloads are small/bounded and we avoid a native build step in CI. The
+  `getCached`/`putCached`/`invalidate*` shape is SQLite-swappable if the working
+  set ever outgrows JSON.
+- **No local `git` binary / no local clone.** All diff + blob data comes from the
+  CodeCommit API (`GetDifferences`, `GetBlob`, `BatchGetCommits`). This was a
+  deliberate change from the original "shell out to git" plan: it means the app
+  works on a fresh machine with no repo checked out. Diffs are computed in the
+  main process from blob bytes via the `diff` library (`computeFileDiff.ts`).
 
 ## Non-negotiable architecture rules
 
@@ -29,10 +44,17 @@ UI and app logic must NEVER import the CodeCommit SDK directly — only through 
 
 ### 2. Huge-diff performance is the #1 risk
 - Target: 10k–50k+ changed lines must scroll smoothly.
-- NEVER render all diff lines as DOM nodes. Use Monaco's diff editor and/or virtualization.
-- Diff computation happens in the **main process**; structured data is sent to the renderer.
+- NEVER render all diff lines as DOM nodes up front. The continuous renderer
+  lazy-mounts per file (IntersectionObserver + dwell) and per hunk, and
+  auto-collapses files above ~500 rendered lines so a single huge file is opt-in.
+  If you ever need a *single* contiguous multi-thousand-line hunk to scroll
+  smoothly, that path still renders all its rows once mounted — add intra-hunk
+  virtualization there rather than removing the auto-collapse valve.
+- Diff computation happens in the **main process**; structured hunk data is sent
+  to the renderer (only changed lines + context, not whole files).
 - Lazy-load per file. Do NOT load all files' full content up front.
-- Keep a synthetic large-diff fixture around to regression-test performance.
+- A synthetic large-diff fixture lives in `src/renderer/syntheticDiff.ts`; keep it
+  wired to a dev-only entry point so huge-diff scroll can be regression-tested.
 
 ### 3. Process discipline
 Heavy work (git, diff parsing, AWS calls) stays in the main process. The renderer must

@@ -2,6 +2,10 @@ import { app, BrowserWindow, Menu, shell } from 'electron';
 import type { MenuItemConstructorOptions } from 'electron';
 import { join } from 'node:path';
 import { registerIpc } from './ipc';
+// electron-updater ships CommonJS; grab autoUpdater off the default export so it
+// works through electron-vite's externalized-deps interop.
+import updater from 'electron-updater';
+const { autoUpdater } = updater;
 
 const isDev = !app.isPackaged;
 const isMac = process.platform === 'darwin';
@@ -95,10 +99,22 @@ function buildMenu(): Menu {
   return Menu.buildFromTemplate(template);
 }
 
+// Check the configured release feed (electron-builder.yml `publish`) for a newer
+// version and download it in the background, notifying the user when it's ready
+// to install. No-op in dev (there's no packaged app to update) and best-effort:
+// a missing feed or offline machine must never block startup.
+function checkForUpdates(): void {
+  if (isDev) return;
+  autoUpdater.checkForUpdatesAndNotify().catch((err) => {
+    console.error('[autoUpdater] update check failed:', err);
+  });
+}
+
 app.whenReady().then(() => {
   Menu.setApplicationMenu(buildMenu());
   registerIpc();
   createWindow();
+  checkForUpdates();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

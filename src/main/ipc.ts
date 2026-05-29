@@ -18,9 +18,11 @@ import type {
   IpcResult,
   ListPRsFilter,
   ManualCredentialsInput,
+  MergePullRequestInput,
   PostCommentInput,
   PostReplyInput,
   PRDifferences,
+  PRStatus,
   ListDoneEvent,
   ListErrorEvent,
   ListItemEvent,
@@ -28,10 +30,12 @@ import type {
   PullRequestCommit,
   PullRequestDetail,
   PullRequestMergeability,
+  PullRequestSummary,
   RelativeFileVersion,
   RepoBranchPrefs,
   RepositorySummary,
   ReviewedFile,
+  UpdatePullRequestInput,
 } from '@shared/types';
 import { CodeCommitProvider, ProviderError } from './providers/CodeCommitProvider';
 import type { ReviewProvider } from './providers/ReviewProvider';
@@ -71,6 +75,9 @@ export const IPC = {
   prsCommitDifferences: 'prs:commit-differences',
   prsRefDifferences: 'prs:ref-differences',
   prsCreate: 'prs:create',
+  prsMerge: 'prs:merge',
+  prsSetStatus: 'prs:set-status',
+  prsUpdate: 'prs:update',
   prsCommits: 'prs:commits',
   prsFilePair: 'prs:file-pair',
   prsFileDiff: 'prs:file-diff',
@@ -429,10 +436,59 @@ export function registerIpc(): void {
     async (
       _e,
       input: CreatePullRequestInput,
-    ): Promise<IpcResult<import('@shared/types').PullRequestSummary>> => {
+    ): Promise<IpcResult<PullRequestSummary>> => {
       try {
         const p = await getProvider();
         return ok(await p.createPullRequest(input));
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IPC.prsMerge,
+    async (
+      _e,
+      input: MergePullRequestInput,
+    ): Promise<IpcResult<PullRequestSummary>> => {
+      try {
+        const p = await getProvider();
+        return ok(await p.mergePullRequest(input));
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IPC.prsSetStatus,
+    async (
+      _e,
+      repositoryName: string,
+      pullRequestId: string,
+      status: PRStatus,
+    ): Promise<IpcResult<PullRequestSummary>> => {
+      try {
+        const p = await getProvider();
+        return ok(
+          await p.setPullRequestStatus(repositoryName, pullRequestId, status),
+        );
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IPC.prsUpdate,
+    async (
+      _e,
+      input: UpdatePullRequestInput,
+    ): Promise<IpcResult<PullRequestSummary>> => {
+      try {
+        const p = await getProvider();
+        return ok(await p.updatePullRequest(input));
       } catch (err) {
         return fail(err);
       }

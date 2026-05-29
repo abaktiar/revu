@@ -15,7 +15,7 @@ import type {
   FileDiff,
   FileDiffEntry,
 } from '@shared/types';
-import { api, unwrap } from '../../api';
+import { loadFileDiff } from '../../syntheticDiff';
 import { fileDiffSemaphore } from '../../concurrency';
 import {
   buildDraftIndex,
@@ -183,7 +183,7 @@ function FileDiffSectionImpl({
     if (!hasLoaded || diff || error) return;
     let cancelled = false;
     fileDiffSemaphore
-      .acquire(() => unwrap(api.prs.fileDiff(ctx.repositoryName, entry)))
+      .acquire(() => loadFileDiff(ctx.repositoryName, entry))
       .then((d) => {
         if (cancelled) return;
         setDiff(d);

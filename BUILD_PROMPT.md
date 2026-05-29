@@ -1,5 +1,16 @@
 # Project: CodeCommit PR Review Desktop App
 
+> **Status (kept for history).** M1–M4 are complete, plus approvals, mergeability,
+> PR create/edit/close, merge, per-commit diffs, reviewed-file tracking, repo
+> switcher, file tree + fuzzy finder, and packaging. Three stack decisions below
+> were deliberately changed during the build — see `CLAUDE.md` for the current,
+> authoritative stack:
+> - **Monaco diff editor → custom continuous diff renderer.** Monaco is no longer a dependency.
+> - **SQLite (`better-sqlite3`) → JSON files** under Electron `userData`.
+> - **Local `git` binary for fetch/diff → CodeCommit API only** (`GetDifferences`/`GetBlob`); no local clone.
+>
+> The milestone text below is the original plan; where it conflicts with `CLAUDE.md`, `CLAUDE.md` wins.
+
 ## Goal
 Build a cross-platform (macOS + Windows) desktop app for reviewing AWS CodeCommit
 pull requests locally, with a fast diff viewer and comments that sync back to CodeCommit.

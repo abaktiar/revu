@@ -448,6 +448,26 @@ export interface PullRequestMergeability {
   reason?: string;
 }
 
+// ---- PR mutations -----------------------------------------------------
+
+export interface MergePullRequestInput {
+  repositoryName: string;
+  pullRequestId: string;
+  strategy: MergeOptionId;
+  // Optional commit message for SQUASH / THREE_WAY merges (ignored for FF).
+  commitMessage?: string;
+}
+
+export interface UpdatePullRequestInput {
+  repositoryName: string;
+  pullRequestId: string;
+  // Provide the field(s) to change; a missing field is left untouched. An
+  // empty-string title is rejected (CodeCommit requires a non-empty title);
+  // an empty-string description is allowed (clears the description).
+  title?: string;
+  description?: string;
+}
+
 // ---- Per-file local review state --------------------------------------
 
 export interface ReviewedFile {

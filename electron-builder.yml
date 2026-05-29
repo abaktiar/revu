@@ -1,0 +1,45 @@
+appId: com.abaktiar.revu
+productName: revu
+copyright: Copyright © revu
+
+directories:
+  output: release
+  buildResources: build
+
+# electron-vite emits the compiled main/preload/renderer into out/. Package
+# those plus the manifest; node_modules are pulled in automatically for the
+# non-externalized deps.
+files:
+  - out/**/*
+  - package.json
+
+# Auto-update feed. electron-updater reads this at runtime to find new releases.
+# Point owner/repo at wherever the GitHub releases live; CI publishes there with
+# `electron-builder --publish always` and a GH_TOKEN. Swap to a `generic`
+# provider with a `url:` if you self-host the update artifacts instead.
+publish:
+  provider: github
+  owner: abaktiar
+  repo: revu
+
+mac:
+  category: public.app-category.developer-tools
+  target:
+    - dmg
+    - zip # zip target is required for electron-updater on macOS
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
+win:
+  target:
+    - nsis
+  artifactName: ${productName}-${version}-Setup.${ext}
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+
+linux:
+  target:
+    - AppImage
+  category: Development

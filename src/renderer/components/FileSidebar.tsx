@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type {
   DiffChangeType,
   FileDiffEntry,
@@ -6,6 +6,20 @@ import type {
 } from '@shared/types';
 
 export type SidebarTab = 'files' | 'commits';
+
+// Tree vs flat-list mode for the files panel, persisted across sessions so a
+// user who prefers one layout keeps it. Mirrors VS Code's "Source Control"
+// list/tree toggle.
+type FileViewMode = 'tree' | 'list';
+const VIEW_MODE_KEY = 'revu.fileViewMode';
+
+function loadViewMode(): FileViewMode {
+  try {
+    return localStorage.getItem(VIEW_MODE_KEY) === 'list' ? 'list' : 'tree';
+  } catch {
+    return 'tree';
+  }
+}
 
 interface Props {
   // Tabs
@@ -86,6 +100,15 @@ export function FileSidebar({
   );
 }
 
+interface FilesPanelCommon {
+  selectedPath?: string;
+  commentCounts: Record<string, number>;
+  reviewedPaths: Set<string>;
+  onSelect: (file: FileDiffEntry) => void;
+  onToggleReviewed: (file: FileDiffEntry, next: boolean) => void;
+  readOnly?: boolean;
+}
+
 function FilesPanel({
   files,
   selectedPath,
@@ -94,17 +117,18 @@ function FilesPanel({
   onSelect,
   onToggleReviewed,
   readOnly,
-}: {
-  files: FileDiffEntry[];
-  selectedPath?: string;
-  commentCounts: Record<string, number>;
-  reviewedPaths: Set<string>;
-  onSelect: (file: FileDiffEntry) => void;
-  onToggleReviewed: (file: FileDiffEntry, next: boolean) => void;
-  readOnly?: boolean;
-}): JSX.Element {
+}: { files: FileDiffEntry[] } & FilesPanelCommon): JSX.Element {
   const [query, setQuery] = useState('');
   const [hideReviewed, setHideReviewed] = useState(false);
+  const [viewMode, setViewMode] = useState<FileViewMode>(loadViewMode);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(VIEW_MODE_KEY, viewMode);
+    } catch {
+      // ignore storage failures (private mode, etc.)
+    }
+  }, [viewMode]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -115,18 +139,53 @@ function FilesPanel({
     });
   }, [files, query, hideReviewed, reviewedPaths, readOnly]);
 
+  // When the user is searching or hiding reviewed files, the tree should show
+  // every match expanded rather than honoring collapsed folders.
+  const forceExpand = query.trim().length > 0 || (!readOnly && hideReviewed);
+
   const reviewedCount = files.filter((f) => reviewedPaths.has(f.path)).length;
+
+  const common: FilesPanelCommon = {
+    selectedPath,
+    commentCounts,
+    reviewedPaths,
+    onSelect,
+    onToggleReviewed,
+    readOnly,
+  };
 
   return (
     <>
       <div className="file-sidebar-head">
-        <input
-          className="file-filter"
-          type="search"
-          placeholder={`Filter ${files.length} file${files.length === 1 ? '' : 's'}…`}
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
+        <div className="file-sidebar-head-row">
+          <input
+            className="file-filter"
+            type="search"
+            placeholder={`Filter ${files.length} file${files.length === 1 ? '' : 's'}…`}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          <div className="file-view-toggle" role="group" aria-label="File view">
+            <button
+              type="button"
+              className={`view-toggle-btn${viewMode === 'tree' ? ' is-active' : ''}`}
+              aria-pressed={viewMode === 'tree'}
+              title="Tree view"
+              onClick={() => setViewMode('tree')}
+            >
+              Tree
+            </button>
+            <button
+              type="button"
+              className={`view-toggle-btn${viewMode === 'list' ? ' is-active' : ''}`}
+              aria-pressed={viewMode === 'list'}
+              title="List view"
+              onClick={() => setViewMode('list')}
+            >
+              List
+            </button>
+          </div>
+        </div>
         {!readOnly && (
           <label className="reviewed-toggle">
             <input
@@ -138,44 +197,265 @@ function FilesPanel({
           </label>
         )}
       </div>
-      <ul>
-        {filtered.map((f) => {
-          const isActive = f.path === selectedPath;
-          const count = commentCounts[f.path] ?? 0;
-          const isReviewed = !readOnly && reviewedPaths.has(f.path);
-          return (
-            <li
-              key={`${f.changeType}-${f.path}`}
-              className={[
-                isActive ? 'active' : '',
-                isReviewed ? 'reviewed' : '',
-              ]
-                .filter(Boolean)
-                .join(' ')}
-              onClick={() => onSelect(f)}
-              title={f.path}
-            >
-              {!readOnly && (
-                <input
-                  type="checkbox"
-                  className="file-reviewed-cb"
-                  checked={isReviewed}
-                  onClick={(e) => e.stopPropagation()}
-                  onChange={(e) => onToggleReviewed(f, e.target.checked)}
-                  title="Mark as reviewed"
-                />
-              )}
-              <span className={`ct ct-${f.changeType}`}>{f.changeType}</span>
-              <span className="path">{f.path}</span>
-              {count > 0 && <span className="badge-count">{count}</span>}
-            </li>
-          );
-        })}
-        {filtered.length === 0 && (
+      {filtered.length === 0 ? (
+        <ul>
           <li className="empty-li">No files match.</li>
-        )}
-      </ul>
+        </ul>
+      ) : viewMode === 'tree' ? (
+        <TreeView files={filtered} forceExpand={forceExpand} {...common} />
+      ) : (
+        <ListView files={filtered} {...common} />
+      )}
     </>
+  );
+}
+
+// ---- Flat list view --------------------------------------------------
+
+function ListView({
+  files,
+  ...common
+}: { files: FileDiffEntry[] } & FilesPanelCommon): JSX.Element {
+  return (
+    <ul>
+      {files.map((f) => (
+        <FileRow
+          key={`${f.changeType}-${f.path}`}
+          entry={f}
+          label={f.path}
+          depth={0}
+          {...common}
+        />
+      ))}
+    </ul>
+  );
+}
+
+// ---- Tree view -------------------------------------------------------
+
+type TreeNode =
+  | {
+      kind: 'dir';
+      name: string;
+      path: string;
+      children: TreeNode[];
+      fileCount: number;
+    }
+  | { kind: 'file'; name: string; entry: FileDiffEntry };
+
+interface DirAcc {
+  dirs: Map<string, DirAcc>;
+  files: FileDiffEntry[];
+}
+
+// Build a nested tree from file paths, compacting single-child directory chains
+// (e.g. `src/main/providers` becomes one node when nothing else lives along the
+// way) exactly like VS Code's tree.
+function buildFileTree(files: FileDiffEntry[]): TreeNode[] {
+  const root: DirAcc = { dirs: new Map(), files: [] };
+  for (const f of files) {
+    const parts = f.path.split('/');
+    let cur = root;
+    for (let i = 0; i < parts.length - 1; i++) {
+      const seg = parts[i]!;
+      let next = cur.dirs.get(seg);
+      if (!next) {
+        next = { dirs: new Map(), files: [] };
+        cur.dirs.set(seg, next);
+      }
+      cur = next;
+    }
+    cur.files.push(f);
+  }
+
+  function toNodes(acc: DirAcc, prefix: string): TreeNode[] {
+    const dirNodes: TreeNode[] = [];
+    for (const [name, child] of acc.dirs) {
+      let displayName = name;
+      let node = child;
+      let nodePath = prefix ? `${prefix}/${name}` : name;
+      // Compact chains: while this dir has exactly one subdir and no files,
+      // fold the child into the name.
+      while (node.files.length === 0 && node.dirs.size === 1) {
+        const entry = [...node.dirs.entries()][0]!;
+        displayName = `${displayName}/${entry[0]}`;
+        nodePath = `${nodePath}/${entry[0]}`;
+        node = entry[1];
+      }
+      const children = toNodes(node, nodePath);
+      dirNodes.push({
+        kind: 'dir',
+        name: displayName,
+        path: nodePath,
+        children,
+        fileCount: countFiles(children),
+      });
+    }
+    dirNodes.sort((a, b) => a.name.localeCompare(b.name));
+    const fileNodes: TreeNode[] = acc.files
+      .map((entry) => ({
+        kind: 'file' as const,
+        name: entry.path.split('/').pop() ?? entry.path,
+        entry,
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    return [...dirNodes, ...fileNodes];
+  }
+
+  return toNodes(root, '');
+}
+
+function countFiles(nodes: TreeNode[]): number {
+  let n = 0;
+  for (const node of nodes) n += node.kind === 'file' ? 1 : node.fileCount;
+  return n;
+}
+
+interface FlatRow {
+  node: TreeNode;
+  depth: number;
+}
+
+// Flatten the tree into rows honoring collapsed directories, so the rendered
+// <ul> stays a simple list (easier indentation + no deep nesting reflow).
+function flattenTree(
+  nodes: TreeNode[],
+  depth: number,
+  collapsed: Set<string>,
+  forceExpand: boolean,
+  out: FlatRow[],
+): void {
+  for (const node of nodes) {
+    out.push({ node, depth });
+    if (node.kind === 'dir') {
+      const isCollapsed = !forceExpand && collapsed.has(node.path);
+      if (!isCollapsed) {
+        flattenTree(node.children, depth + 1, collapsed, forceExpand, out);
+      }
+    }
+  }
+}
+
+function TreeView({
+  files,
+  forceExpand,
+  ...common
+}: {
+  files: FileDiffEntry[];
+  forceExpand: boolean;
+} & FilesPanelCommon): JSX.Element {
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+
+  const tree = useMemo(() => buildFileTree(files), [files]);
+  const rows = useMemo(() => {
+    const out: FlatRow[] = [];
+    flattenTree(tree, 0, collapsed, forceExpand, out);
+    return out;
+  }, [tree, collapsed, forceExpand]);
+
+  const toggleDir = (path: string): void => {
+    setCollapsed((cur) => {
+      const next = new Set(cur);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  };
+
+  return (
+    <ul className="file-tree">
+      {rows.map(({ node, depth }) =>
+        node.kind === 'dir' ? (
+          <DirRow
+            key={`d-${node.path}`}
+            name={node.name}
+            depth={depth}
+            fileCount={node.fileCount}
+            collapsed={!forceExpand && collapsed.has(node.path)}
+            onToggle={() => toggleDir(node.path)}
+          />
+        ) : (
+          <FileRow
+            key={`f-${node.entry.path}`}
+            entry={node.entry}
+            label={node.name}
+            depth={depth}
+            {...common}
+          />
+        ),
+      )}
+    </ul>
+  );
+}
+
+function DirRow({
+  name,
+  depth,
+  fileCount,
+  collapsed,
+  onToggle,
+}: {
+  name: string;
+  depth: number;
+  fileCount: number;
+  collapsed: boolean;
+  onToggle: () => void;
+}): JSX.Element {
+  return (
+    <li
+      className="file-tree-dir"
+      style={{ paddingLeft: 6 + depth * 12 }}
+      onClick={onToggle}
+      title={name}
+    >
+      <span className="tree-chevron">{collapsed ? '▸' : '▾'}</span>
+      <span className="tree-dir-name">{name}</span>
+      <span className="tree-dir-count">{fileCount}</span>
+    </li>
+  );
+}
+
+function FileRow({
+  entry,
+  label,
+  depth,
+  selectedPath,
+  commentCounts,
+  reviewedPaths,
+  onSelect,
+  onToggleReviewed,
+  readOnly,
+}: { entry: FileDiffEntry; label: string; depth: number } & FilesPanelCommon): JSX.Element {
+  const isActive = entry.path === selectedPath;
+  const count = commentCounts[entry.path] ?? 0;
+  const isReviewed = !readOnly && reviewedPaths.has(entry.path);
+  return (
+    <li
+      className={[
+        'file-tree-file',
+        isActive ? 'active' : '',
+        isReviewed ? 'reviewed' : '',
+      ]
+        .filter(Boolean)
+        .join(' ')}
+      style={{ paddingLeft: 6 + depth * 12 }}
+      onClick={() => onSelect(entry)}
+      title={entry.path}
+    >
+      {!readOnly && (
+        <input
+          type="checkbox"
+          className="file-reviewed-cb"
+          checked={isReviewed}
+          onClick={(e) => e.stopPropagation()}
+          onChange={(e) => onToggleReviewed(entry, e.target.checked)}
+          title="Mark as reviewed"
+        />
+      )}
+      <span className={`ct ct-${entry.changeType}`}>{entry.changeType}</span>
+      <span className="path">{label}</span>
+      {count > 0 && <span className="badge-count">{count}</span>}
+    </li>
   );
 }
 
