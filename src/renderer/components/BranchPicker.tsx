@@ -131,7 +131,13 @@ export function BranchPicker({
     favorites: BranchSummary[];
     rest: BranchSummary[];
   }>(() => {
-    if (!branches) return { favorites: [], rest: [] };
+    // Pre-fetch: surface locally-known favorites immediately so the popup is
+    // useful before the CodeCommit ListBranches call resolves. The full list
+    // reconciles in (and re-partitions) once `branches` arrives.
+    if (!branches) {
+      const favNames = favoriteDestinations ?? [];
+      return { favorites: favNames.map((name) => ({ name })), rest: [] };
+    }
     if (!favoriteDestinations || favoriteDestinations.length === 0) {
       return { favorites: [], rest: branches };
     }
@@ -326,7 +332,8 @@ export function BranchPicker({
             role="listbox"
             aria-label={ariaLabel}
           >
-            {loadError ? (
+            {loadError && !branches && visible.flat.length === 0 ? (
+              // Hard failure with nothing to show — full error + retry.
               <div className="branch-picker-error">
                 Could not load branches.{' '}
                 <button
@@ -336,13 +343,10 @@ export function BranchPicker({
                   Retry
                 </button>
               </div>
-            ) : loading && !branches ? (
-              <div className="branch-picker-empty">Loading branches…</div>
-            ) : visible.flat.length === 0 ? (
-              <div className="branch-picker-empty">
-                {filter ? `No branches match "${filter}".` : 'No branches found.'}
-              </div>
             ) : (
+              // Render locally-known favorites immediately; the full branch list
+              // reconciles in below once ListBranches resolves. A spinner row
+              // sits under the favorites while loading.
               <>
                 {visible.favorites.length > 0 && (
                   <div className="branch-picker-section">
@@ -362,6 +366,30 @@ export function BranchPicker({
                     {visible.rest.map((b) =>
                       renderRow(b, runningIndex++, false),
                     )}
+                  </div>
+                )}
+                {loading && (
+                  <div className="branch-picker-loading" role="status">
+                    <span className="branch-picker-spinner" aria-hidden="true" />
+                    Loading branches…
+                  </div>
+                )}
+                {loadError && (
+                  <div className="branch-picker-loading">
+                    Couldn’t refresh.{' '}
+                    <button
+                      type="button"
+                      onClick={() => setRefreshToken((n) => n + 1)}
+                    >
+                      Retry
+                    </button>
+                  </div>
+                )}
+                {!loading && !loadError && visible.flat.length === 0 && (
+                  <div className="branch-picker-empty">
+                    {filter
+                      ? `No branches match "${filter}".`
+                      : 'No branches found.'}
                   </div>
                 )}
               </>

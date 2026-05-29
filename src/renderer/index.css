@@ -223,6 +223,12 @@ textarea:focus {
   background: var(--panel);
   border-bottom: 1px solid var(--border);
   -webkit-app-region: drag;
+  /* Lift the topbar above the filters bar: the macOS vibrancy rules give
+   * `.filters` a `backdrop-filter`, which creates a stacking context. Without
+   * this, the filters bar (a later DOM sibling) paints over the RepoSwitcher
+   * popup, clipping it. */
+  position: relative;
+  z-index: 30;
 }
 
 .topbar .brand {
@@ -2646,6 +2652,16 @@ table.prs tr.clickable {
   backdrop-filter: blur(22px) saturate(1.35);
 }
 
+/* Floating popups (repo switcher, branch picker) sit over the busy PR list, so
+ * they need a denser frosted backdrop than the bars — otherwise the list text
+ * bleeds through the translucent --panel and the menu is hard to read. */
+.platform-darwin[data-theme='light'] .repo-switcher-popup,
+.platform-darwin[data-theme='light'] .branch-picker-popup {
+  background: rgba(248, 250, 252, 0.94);
+  -webkit-backdrop-filter: blur(34px) saturate(1.4);
+  backdrop-filter: blur(34px) saturate(1.4);
+}
+
 .platform-darwin[data-theme='light'] .file-sidebar {
   background: rgba(246, 248, 250, 0.68);
   -webkit-backdrop-filter: blur(34px) saturate(1.4);
@@ -2686,6 +2702,16 @@ table.prs tr.clickable {
   background: rgba(20, 20, 20, 0.72);
   -webkit-backdrop-filter: blur(22px) saturate(1.35);
   backdrop-filter: blur(22px) saturate(1.35);
+}
+
+/* Floating popups (repo switcher, branch picker) sit over the busy PR list, so
+ * they need a denser frosted backdrop than the bars — otherwise the list text
+ * bleeds through the translucent --panel and the menu is hard to read. */
+.platform-darwin[data-theme='dark'] .repo-switcher-popup,
+.platform-darwin[data-theme='dark'] .branch-picker-popup {
+  background: rgba(24, 24, 24, 0.95);
+  -webkit-backdrop-filter: blur(34px) saturate(1.4);
+  backdrop-filter: blur(34px) saturate(1.4);
 }
 
 .platform-darwin[data-theme='dark'] table.prs th {
@@ -3218,6 +3244,40 @@ table.prs tr.clickable {
   text-align: center;
   color: var(--text-dim);
   font-size: 13px;
+}
+/* Inline status row that sits under the favorites while the full list loads
+ * (or reconciles after a refresh / error). Left-aligned, quieter than the
+ * centered empty state. */
+.branch-picker-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.branch-picker-loading button {
+  padding: 2px 8px;
+  background: var(--control);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.branch-picker-spinner {
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: picker-spin 0.7s linear infinite;
+}
+@keyframes picker-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 .branch-picker-error button {
   margin-left: 6px;

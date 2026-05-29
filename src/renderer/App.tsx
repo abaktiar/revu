@@ -469,6 +469,12 @@ export function App(): JSX.Element {
           current={settings.repositoryName}
           favorites={settings.favoriteRepos}
           onSwitch={(name) => void switchRepo(name)}
+          onToggleFavorite={(name, favorite) => {
+            const next = favorite
+              ? [...settings.favoriteRepos, name]
+              : settings.favoriteRepos.filter((n) => n !== name);
+            void persistSettings({ ...settings, favoriteRepos: next });
+          }}
         />
         <span className="grow" />
         <SettingsSummary settings={settings} />
@@ -578,11 +584,9 @@ function SettingsSummary({ settings }: { settings: AppSettings }): JSX.Element {
         ? 'keys ✓'
         : 'keys (not set)'
       : (settings.profile ?? 'default chain');
-  const parts = [
-    credLabel,
-    settings.region ?? 'no region',
-    settings.repositoryName ?? 'no repo',
-  ];
+  // Repo name is intentionally omitted here — the RepoSwitcher trigger already
+  // names the active repository, so repeating it in the summary is redundant.
+  const parts = [credLabel, settings.region ?? 'no region'];
   return <span className="summary">{parts.join('  ·  ')}</span>;
 }
 
