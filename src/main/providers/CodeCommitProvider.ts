@@ -2,11 +2,14 @@ import {
   BatchGetCommitsCommand,
   CodeCommitClient,
   type Commit as CCCommit,
+  CreatePullRequestCommand,
   DeleteCommentContentCommand,
   DescribePullRequestEventsCommand,
   EvaluatePullRequestApprovalRulesCommand,
   GetBlobCommand,
+  GetBranchCommand,
   GetCommentsForPullRequestCommand,
+  GetCommitCommand,
   GetMergeConflictsCommand,
   GetMergeOptionsCommand,
   GetPullRequestApprovalStatesCommand,
@@ -14,6 +17,7 @@ import {
   type Comment as CCComment,
   type CommentsForPullRequest,
   GetDifferencesCommand,
+  ListBranchesCommand,
   ListPullRequestsCommand,
   ListRepositoriesCommand,
   PostCommentForPullRequestCommand,
@@ -25,14 +29,18 @@ import {
   type PullRequestStatusEnum,
   type PullRequestTarget as CCPullRequestTarget,
 } from '@aws-sdk/client-codecommit';
+import { randomUUID } from 'node:crypto';
 import { GetCallerIdentityCommand, STSClient } from '@aws-sdk/client-sts';
 import { fromIni, fromNodeProviderChain } from '@aws-sdk/credential-providers';
 import type {
   ApprovalAction,
   ApprovalState,
   ApprovalStateEntry,
+  BranchSummary,
+  BranchTip,
   CommentNode,
   CommentThread,
+  CreatePullRequestInput,
   DeleteCommentInput,
   DiffChangeType,
   ExpandLinesRequest,
@@ -77,6 +85,7 @@ import {
 } from '../cache/jsonCache';
 import {
   approvalKey,
+  branchesKey,
   commentsKey,
   differencesKey,
   fileDiffKey,
@@ -238,6 +247,68 @@ export class CodeCommitProvider implements ReviewProvider {
     out.sort((a, b) => a.name.localeCompare(b.name));
     await putCached(NS.repos, '_', out, LIMITS.repos);
     return out;
+  }
+
+  // ---- Branches ---------------------------------------------------------
+
+  // Returns every branch name in the repo, alphabetical. Cached for TTL.branches
+  // so reopening the Create-PR picker doesn't re-page through the whole list.
+  // ListBranches gives us *only* names — no last-modified, no committer — so
+  // sort is purely lexical. Recency sort would need GetBranch + GetCommit per
+  // branch, which is N+1 against CodeCommit's TPS budget; we intentionally
+  // skip it.
+  async listBranches(
+    repositoryName: string,
+    opts?: ReadOptions,
+  ): Promise<BranchSummary[]> {
+    const bKey = branchesKey(repositoryName);
+    if (!opts?.forceFresh) {
+      const cached = await getCached<BranchSummary[]>(
+        NS.branches,
+        bKey,
+        TTL.branches,
+      );
+      if (cached) return cached;
+    }
+    const names: string[] = [];
+    let nextToken: string | undefined;
+    do {
+      const input = { repositoryName, nextToken };
+      const res = await this.cc('ListBranches', input, (i) =>
+        this.client.send(new ListBranchesCommand(i)),
+      );
+      for (const b of res.branches ?? []) {
+        if (b) names.push(b);
+      }
+      nextToken = res.nextToken;
+    } while (nextToken);
+    names.sort((a, b) => a.localeCompare(b));
+    const out: BranchSummary[] = names.map((name) => ({ name }));
+    await putCached(NS.branches, bKey, out, LIMITS.branches);
+    return out;
+  }
+
+  // Used by the Create-PR flow to auto-fill title (subject) + description
+  // (body) from the latest commit on the source branch. Two AWS calls
+  // (GetBranch + GetCommit); cheap, and only invoked when the user actually
+  // picks a source. forceFresh is honored on the branch-tip lookup so
+  // Refresh in the Create-PR view re-resolves a freshly-pushed branch.
+  async getBranchTip(
+    repositoryName: string,
+    branchName: string,
+    _opts?: ReadOptions,
+  ): Promise<BranchTip> {
+    const commitId = await this.resolveBranchTip(repositoryName, branchName);
+    const res = await this.cc(
+      'GetCommit',
+      { repositoryName, commitId },
+      (i) => this.client.send(new GetCommitCommand(i)),
+    );
+    const message = (res.commit?.message ?? '').trim();
+    const nl = message.indexOf('\n');
+    const subject = nl >= 0 ? message.slice(0, nl).trim() : message;
+    const body = nl >= 0 ? message.slice(nl + 1).trim() : '';
+    return { branchName, commitId, subject, body };
   }
 
   // ---- PRs --------------------------------------------------------------
@@ -459,6 +530,73 @@ export class CodeCommitProvider implements ReviewProvider {
       );
     }
     return this.fetchDifferences(repositoryName, before, after, '', opts);
+  }
+
+  // Resolve refs to commit IDs then run the standard diff pipeline. We
+  // resolve refs first (one GetBranch each) so the result lands in the same
+  // (repo, before, after) cache as getDifferences / getCommitDifferences —
+  // a user who shipped a PR and then immediately re-opens its diff sees an
+  // instant hit instead of a redundant fetch.
+  //
+  // The branch-tip commit IDs change every time someone pushes; if a user
+  // sits on the Create-PR screen for hours and the source branch advances,
+  // a forceFresh refresh re-resolves and produces a new cache key. Anything
+  // already cached for the old commit pair stays valid and undisturbed.
+  async getRefDifferences(
+    repositoryName: string,
+    sourceRef: string,
+    destinationRef: string,
+    opts?: ReadOptions,
+  ): Promise<PRDifferences> {
+    const source = nonEmpty(sourceRef);
+    const dest = nonEmpty(destinationRef);
+    if (!source || !dest) {
+      throw new Error(
+        `getRefDifferences requires non-empty refs ` +
+          `(source=${j(sourceRef)} dest=${j(destinationRef)})`,
+      );
+    }
+    const [sourceCommit, destCommit] = await Promise.all([
+      this.resolveBranchTip(repositoryName, source),
+      this.resolveBranchTip(repositoryName, dest),
+    ]);
+    // Identical tips → no commits to diff. Return an empty PRDifferences
+    // without burning a GetDifferences call. The renderer treats this as the
+    // "nothing to merge" validation signal.
+    if (sourceCommit === destCommit) {
+      return {
+        pullRequestId: '',
+        repositoryName,
+        beforeCommitId: destCommit,
+        afterCommitId: sourceCommit,
+        files: [],
+      };
+    }
+    return this.fetchDifferences(
+      repositoryName,
+      destCommit,
+      sourceCommit,
+      '',
+      opts,
+    );
+  }
+
+  private async resolveBranchTip(
+    repositoryName: string,
+    branchName: string,
+  ): Promise<string> {
+    const res = await this.cc(
+      'GetBranch',
+      { repositoryName, branchName },
+      (i) => this.client.send(new GetBranchCommand(i)),
+    );
+    const commit = nonEmpty(res.branch?.commitId);
+    if (!commit) {
+      throw new Error(
+        `Branch "${branchName}" in ${repositoryName} has no commit id.`,
+      );
+    }
+    return commit;
   }
 
   // Internal: the actual GetDifferences pagination + cache logic shared by
@@ -1229,6 +1367,65 @@ async getMergeability(
     return mapComment(comment);
   }
 
+  async createPullRequest(
+    input: CreatePullRequestInput,
+  ): Promise<PullRequestSummary> {
+    const title = (input.title ?? '').trim();
+    const source = nonEmpty(input.sourceReference);
+    const dest = nonEmpty(input.destinationReference);
+    if (!title) throw new Error('Pull request title is required.');
+    if (!source || !dest) {
+      throw new Error(
+        `createPullRequest requires non-empty source and destination refs.`,
+      );
+    }
+    if (source === dest) {
+      throw new Error(
+        'Source and destination branches must differ.',
+      );
+    }
+    const sdkInput = {
+      title,
+      description: nonEmpty(input.description),
+      targets: [
+        {
+          repositoryName: input.repositoryName,
+          sourceReference: source,
+          destinationReference: dest,
+        },
+      ],
+      // SDKs auto-generate one if omitted, but a fresh UUID lets us trace
+      // this exact attempt in CloudTrail and survives the caller retrying
+      // without changing the token by accident.
+      clientRequestToken: randomUUID(),
+    };
+    const res = await this.cc('CreatePullRequest', sdkInput, (i) =>
+      this.client.send(new CreatePullRequestCommand(i)),
+    );
+    const pr = res.pullRequest;
+    if (!pr?.pullRequestId) {
+      throw new Error('CodeCommit did not return the new pull request.');
+    }
+    // The new PR's approval state may be NOT_APPROVED, NO_RULES, or UNKNOWN
+    // depending on configured rules — evaluate it so the post-create
+    // detail view shows the right badge from the first render.
+    const approvalState = await this.evaluateApproval(pr);
+    const summary = mapPullRequest(pr, approvalState);
+    // Seed the per-PR cache so a follow-up navigation to detail is instant.
+    await putCached(
+      NS.prDetail,
+      prDetailKey(summary.id),
+      summary,
+      LIMITS.prDetail,
+    );
+    // The PR list for this repo is now stale — drop it so the new PR
+    // appears at the top when the user returns to the list.
+    await invalidateMatching(NS.prList, (k) =>
+      k.startsWith(`${input.repositoryName}|`),
+    );
+    return summary;
+  }
+
   async postReply(input: PostReplyInput): Promise<CommentThread> {
     const sdkInput = {
       inReplyTo: input.inReplyTo,
@@ -1429,6 +1626,7 @@ async getMergeability(
       invalidateMatching(NS.differences, (k) =>
         k.startsWith(`${repositoryName}|`),
       ),
+      invalidateCached(NS.branches, branchesKey(repositoryName)),
       // PR-detail and approval are not keyed by repo; we drop them wholesale
       // because the user's intent on "refresh repo" is "show me the truth."
       invalidateNamespace(NS.prDetail),
@@ -1446,6 +1644,7 @@ async getMergeability(
       invalidateNamespace(NS.differences),
       invalidateNamespace(NS.fileDiff),
       invalidateNamespace(NS.approval),
+      invalidateNamespace(NS.branches),
     ]);
   }
 }

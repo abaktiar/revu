@@ -163,6 +163,45 @@ export interface RepositorySummary {
   id?: string;
 }
 
+// ---- Branches & PR creation -------------------------------------------
+
+export interface BranchSummary {
+  name: string;
+}
+
+// Branch tip + the commit it points at. Used by the Create-PR flow to
+// auto-fill the title (commit subject) and description (commit body) when
+// the user picks a source branch.
+export interface BranchTip {
+  branchName: string;
+  commitId: string;
+  // First line of the commit message, trimmed. Empty if the commit has no
+  // message at all.
+  subject: string;
+  // The remainder of the commit message after the first newline, trimmed.
+  // Empty for single-line commits.
+  body: string;
+}
+
+// Renderer → main payload for creating a new pull request. The provider is
+// responsible for generating a clientRequestToken if the caller omits one.
+export interface CreatePullRequestInput {
+  repositoryName: string;
+  title: string;
+  description?: string;
+  sourceReference: string;
+  destinationReference: string;
+}
+
+// Per-repo persistence for the Create-PR flow: pinned destination branches
+// and the source branch the user picked on their last submission. Both are
+// local-only — the provider never sees these.
+export interface RepoBranchPrefs {
+  repositoryName: string;
+  favoriteDestinations: string[];
+  lastSourceBranch?: string;
+}
+
 // ---- Diff types ---------------------------------------------------------
 
 export type DiffChangeType = 'A' | 'M' | 'D' | 'R';

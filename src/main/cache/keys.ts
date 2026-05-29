@@ -20,6 +20,7 @@ export const NS = {
   mergeability: 'mergeability',
   prList: 'prList',
   repos: 'repos',
+  branches: 'branches',
 } as const;
 
 export const TTL = {
@@ -28,6 +29,8 @@ export const TTL = {
   mergeability: 2 * 60 * 1000, // 2 min
   prList: 60 * 1000, // 1 min
   repos: 30 * 60 * 1000, // 30 min
+  branches: 5 * 60 * 1000, // 5 min — branches turn over fast but a 5-min
+  // cache keeps the Create-PR picker instant on re-open.
 } as const;
 
 export const LIMITS = {
@@ -42,6 +45,7 @@ export const LIMITS = {
   prList: 50,
   repos: 10,
   prCommits: 200,
+  branches: 50,
 } as const;
 
 export function fileDiffKey(
@@ -89,4 +93,8 @@ export function prCommitsKey(
   afterCommitId: string,
 ): string {
   return `${repo}|${beforeCommitId}|${afterCommitId}`;
+}
+
+export function branchesKey(repo: string): string {
+  return repo;
 }

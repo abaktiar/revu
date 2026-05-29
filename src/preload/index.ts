@@ -3,9 +3,12 @@ import type {
   AppSettings,
   ApprovalAction,
   AwsProfileInfo,
+  BranchSummary,
+  BranchTip,
   CommentDraft,
   CommentNode,
   CommentThread,
+  CreatePullRequestInput,
   DeleteCommentInput,
   ExpandLinesRequest,
   ExpandLinesResponse,
@@ -25,7 +28,9 @@ import type {
   PullRequestCommit,
   PullRequestDetail,
   PullRequestMergeability,
+  PullRequestSummary,
   RelativeFileVersion,
+  RepoBranchPrefs,
   RepositorySummary,
   ReviewedFile,
 } from '@shared/types';
@@ -46,11 +51,18 @@ const CH = {
   prsGet: 'prs:get',
   prsDifferences: 'prs:differences',
   prsCommitDifferences: 'prs:commit-differences',
+  prsRefDifferences: 'prs:ref-differences',
+  prsCreate: 'prs:create',
   prsCommits: 'prs:commits',
   prsFilePair: 'prs:file-pair',
   prsFileDiff: 'prs:file-diff',
   prsExpandLines: 'prs:expand-lines',
   prsWebUrl: 'prs:web-url',
+  branchesList: 'branches:list',
+  branchesTip: 'branches:tip',
+  branchPrefsGet: 'branch-prefs:get',
+  branchPrefsToggleFav: 'branch-prefs:toggle-fav',
+  branchPrefsSetLastSource: 'branch-prefs:set-last-source',
   commentsList: 'comments:list',
   commentsPost: 'comments:post',
   commentsReply: 'comments:reply',
@@ -66,6 +78,7 @@ const CH = {
   cacheInvalidatePr: 'cache:invalidate-pr',
   cacheInvalidateRepo: 'cache:invalidate-repo',
   cacheClearAll: 'cache:clear-all',
+  menuNewPr: 'menu:new-pr',
 } as const;
 
 // Pass-through type for read calls so the renderer can opt out of cache.
@@ -175,6 +188,23 @@ const api = {
         afterCommitId,
         opts,
       ),
+    refDifferences: (
+      repositoryName: string,
+      sourceRef: string,
+      destinationRef: string,
+      opts?: ReadOpts,
+    ): Promise<IpcResult<PRDifferences>> =>
+      ipcRenderer.invoke(
+        CH.prsRefDifferences,
+        repositoryName,
+        sourceRef,
+        destinationRef,
+        opts,
+      ),
+    create: (
+      input: CreatePullRequestInput,
+    ): Promise<IpcResult<PullRequestSummary>> =>
+      ipcRenderer.invoke(CH.prsCreate, input),
     filePair: (
       repositoryName: string,
       beforeBlobId: string | undefined,
@@ -196,6 +226,43 @@ const api = {
       pullRequestId: string,
     ): Promise<IpcResult<string | undefined>> =>
       ipcRenderer.invoke(CH.prsWebUrl, repositoryName, pullRequestId),
+  },
+  branches: {
+    list: (
+      repositoryName: string,
+      opts?: ReadOpts,
+    ): Promise<IpcResult<BranchSummary[]>> =>
+      ipcRenderer.invoke(CH.branchesList, repositoryName, opts),
+    tip: (
+      repositoryName: string,
+      branchName: string,
+      opts?: ReadOpts,
+    ): Promise<IpcResult<BranchTip>> =>
+      ipcRenderer.invoke(CH.branchesTip, repositoryName, branchName, opts),
+  },
+  branchPrefs: {
+    get: (repositoryName: string): Promise<IpcResult<RepoBranchPrefs>> =>
+      ipcRenderer.invoke(CH.branchPrefsGet, repositoryName),
+    toggleFavorite: (
+      repositoryName: string,
+      branchName: string,
+      favorite: boolean,
+    ): Promise<IpcResult<RepoBranchPrefs>> =>
+      ipcRenderer.invoke(
+        CH.branchPrefsToggleFav,
+        repositoryName,
+        branchName,
+        favorite,
+      ),
+    setLastSource: (
+      repositoryName: string,
+      branchName: string,
+    ): Promise<IpcResult<RepoBranchPrefs>> =>
+      ipcRenderer.invoke(
+        CH.branchPrefsSetLastSource,
+        repositoryName,
+        branchName,
+      ),
   },
   comments: {
     list: (
@@ -282,6 +349,17 @@ const api = {
         afterCommitId,
         reviewed,
       ),
+  },
+  menu: {
+    // Fires when the user picks File → New Pull Request from the app menu
+    // (or the Cmd/Ctrl+N accelerator that menu owns). The renderer wires
+    // this to the same "open Create-PR view" handler the toolbar button
+    // uses. Returns an unsubscribe function.
+    onNewPullRequest: (handler: () => void): (() => void) => {
+      const listener = (): void => handler();
+      ipcRenderer.on(CH.menuNewPr, listener);
+      return () => ipcRenderer.removeListener(CH.menuNewPr, listener);
+    },
   },
 } as const;
 

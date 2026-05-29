@@ -29,6 +29,7 @@ function buildGroups(): Group[] {
         { keys: ['Home'], description: 'First PR' },
         { keys: ['End'], description: 'Last PR' },
         { keys: ['Enter'], description: 'Open PR' },
+        { keys: [`${macish() ? '⌘' : 'Ctrl'}+N`], description: 'New pull request' },
         { keys: ['/'], description: 'Focus filter' },
         { keys: ['Esc'], description: 'Clear filter' },
       ],

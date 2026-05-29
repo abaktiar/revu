@@ -23,6 +23,10 @@ interface Props {
     kind: 'initial' | 'more';
   } | null;
   onCancel: () => void;
+  // Opens the Create-PR route. Disabled when the app isn't fully configured
+  // (no repository selected) — the caller passes undefined to hide the
+  // button entirely instead.
+  onNewPullRequest?: () => void;
 }
 
 export function PRFilters({
@@ -31,6 +35,7 @@ export function PRFilters({
   onRefresh,
   loading,
   onCancel,
+  onNewPullRequest,
 }: Props): JSX.Element {
   return (
     <div className="filters">
@@ -71,6 +76,15 @@ export function PRFilters({
         style={{ minWidth: 280 }}
       />
       <span className="grow" />
+      {onNewPullRequest && (
+        <button
+          type="button"
+          onClick={onNewPullRequest}
+          title="Open a new pull request (N)"
+        >
+          + New PR
+        </button>
+      )}
       {loading ? <LoadingChip loading={loading} onCancel={onCancel} /> : (
         <button className="primary" onClick={onRefresh}>
           Refresh

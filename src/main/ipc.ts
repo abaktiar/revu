@@ -3,9 +3,12 @@ import type {
   AppSettings,
   ApprovalAction,
   AwsProfileInfo,
+  BranchSummary,
+  BranchTip,
   CommentDraft,
   CommentNode,
   CommentThread,
+  CreatePullRequestInput,
   DeleteCommentInput,
   ExpandLinesRequest,
   ExpandLinesResponse,
@@ -26,6 +29,7 @@ import type {
   PullRequestDetail,
   PullRequestMergeability,
   RelativeFileVersion,
+  RepoBranchPrefs,
   RepositorySummary,
   ReviewedFile,
 } from '@shared/types';
@@ -41,6 +45,11 @@ import {
 } from './settings';
 import { deleteDraft, listDrafts, saveDraft } from './drafts';
 import { listReviewed, setReviewed } from './reviewed';
+import {
+  loadBranchPrefs,
+  setFavoriteDestination,
+  setLastSourceBranch,
+} from './branchPrefs';
 import { clearAllCaches } from './cache/jsonCache';
 
 export const IPC = {
@@ -60,11 +69,18 @@ export const IPC = {
   prsGet: 'prs:get',
   prsDifferences: 'prs:differences',
   prsCommitDifferences: 'prs:commit-differences',
+  prsRefDifferences: 'prs:ref-differences',
+  prsCreate: 'prs:create',
   prsCommits: 'prs:commits',
   prsFilePair: 'prs:file-pair',
   prsFileDiff: 'prs:file-diff',
   prsExpandLines: 'prs:expand-lines',
   prsWebUrl: 'prs:web-url',
+  branchesList: 'branches:list',
+  branchesTip: 'branches:tip',
+  branchPrefsGet: 'branch-prefs:get',
+  branchPrefsToggleFav: 'branch-prefs:toggle-fav',
+  branchPrefsSetLastSource: 'branch-prefs:set-last-source',
   commentsList: 'comments:list',
   commentsPost: 'comments:post',
   commentsReply: 'comments:reply',
@@ -377,6 +393,124 @@ export function registerIpc(): void {
         return ok(
           await p.listPullRequestCommits(repositoryName, pullRequestId, opts),
         );
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IPC.prsRefDifferences,
+    async (
+      _e,
+      repositoryName: string,
+      sourceRef: string,
+      destinationRef: string,
+      opts?: { forceFresh?: boolean },
+    ): Promise<IpcResult<PRDifferences>> => {
+      try {
+        const p = await getProvider();
+        return ok(
+          await p.getRefDifferences(
+            repositoryName,
+            sourceRef,
+            destinationRef,
+            opts,
+          ),
+        );
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IPC.prsCreate,
+    async (
+      _e,
+      input: CreatePullRequestInput,
+    ): Promise<IpcResult<import('@shared/types').PullRequestSummary>> => {
+      try {
+        const p = await getProvider();
+        return ok(await p.createPullRequest(input));
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  // ---- branches & branch prefs ---------------------------------------
+  ipcMain.handle(
+    IPC.branchesList,
+    async (
+      _e,
+      repositoryName: string,
+      opts?: { forceFresh?: boolean },
+    ): Promise<IpcResult<BranchSummary[]>> => {
+      try {
+        const p = await getProvider();
+        return ok(await p.listBranches(repositoryName, opts));
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IPC.branchesTip,
+    async (
+      _e,
+      repositoryName: string,
+      branchName: string,
+      opts?: { forceFresh?: boolean },
+    ): Promise<IpcResult<BranchTip>> => {
+      try {
+        const p = await getProvider();
+        return ok(await p.getBranchTip(repositoryName, branchName, opts));
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IPC.branchPrefsGet,
+    async (_e, repositoryName: string): Promise<IpcResult<RepoBranchPrefs>> => {
+      try {
+        return ok(await loadBranchPrefs(repositoryName));
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IPC.branchPrefsToggleFav,
+    async (
+      _e,
+      repositoryName: string,
+      branchName: string,
+      favorite: boolean,
+    ): Promise<IpcResult<RepoBranchPrefs>> => {
+      try {
+        return ok(
+          await setFavoriteDestination(repositoryName, branchName, favorite),
+        );
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IPC.branchPrefsSetLastSource,
+    async (
+      _e,
+      repositoryName: string,
+      branchName: string,
+    ): Promise<IpcResult<RepoBranchPrefs>> => {
+      try {
+        return ok(await setLastSourceBranch(repositoryName, branchName));
       } catch (err) {
         return fail(err);
       }

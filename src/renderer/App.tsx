@@ -10,6 +10,7 @@ import {
 } from './components/PRFilters';
 import { PRList } from './components/PRList';
 import { PRDetail } from './components/PRDetail';
+import { CreatePR } from './components/CreatePR';
 import { KeyboardHelpOverlay } from './components/KeyboardHelpOverlay';
 import { ErrorBanner } from './components/ErrorBanner';
 
@@ -27,7 +28,8 @@ const DEFAULT_FILTERS: FilterState = {
 
 type View =
   | { kind: 'list' }
-  | { kind: 'detail'; pr: PullRequestSummary };
+  | { kind: 'detail'; pr: PullRequestSummary }
+  | { kind: 'create' };
 
 // Live state of an in-flight streaming PR-list session. Mirrors the
 // item-event payload's `loaded`/`total` so the loading chip can render a
@@ -259,11 +261,13 @@ export function App(): JSX.Element {
 
   // List-level keyboard shortcuts. Only active when the list view is on screen
   // and the user isn't typing into a field; `/` focuses the title-or-author
-  // filter, Esc clears it when populated. These are the small power-user beats
-  // that PRODUCT.md commits to but the mouse-only flow couldn't deliver.
+  // filter, Esc clears it when populated, `n` opens the Create-PR flow.
+  // These are the small power-user beats that PRODUCT.md commits to but the
+  // mouse-only flow couldn't deliver.
   useEffect(() => {
     if (view.kind !== 'list') return;
     if (helpOpen) return;
+    const ready = !!settings && isReadyToFetch(settings);
     function onKey(e: KeyboardEvent): void {
       const tag = (e.target as HTMLElement | null)?.tagName;
       const isTyping = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
@@ -278,11 +282,33 @@ export function App(): JSX.Element {
         }
       } else if (e.key === 'Escape' && isTyping && filters.search) {
         setFilters((f) => ({ ...f, search: '' }));
+      } else if (
+        (e.metaKey || e.ctrlKey) &&
+        !e.shiftKey &&
+        !e.altKey &&
+        (e.key === 'n' || e.key === 'N') &&
+        ready
+      ) {
+        e.preventDefault();
+        setView({ kind: 'create' });
       }
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [view.kind, filters.search, helpOpen]);
+  }, [view.kind, filters.search, helpOpen, settings]);
+
+  // Subscribe to the app menu's "File → New Pull Request" item. The menu
+  // owns its Cmd/Ctrl+N accelerator at the OS level — the renderer's own
+  // keyboard handler still works when the focus isn't in a text field, but
+  // this also fires whether or not the renderer has focus on a text input,
+  // matching standard macOS / Windows "New" behavior.
+  useEffect(() => {
+    const off = api.menu.onNewPullRequest(() => {
+      if (!settings || !isReadyToFetch(settings)) return;
+      setView({ kind: 'create' });
+    });
+    return off;
+  }, [settings]);
 
   // Global help-overlay toggle. `?` opens (Shift+/ on US layouts), Cmd/Ctrl+/
   // is the editor-shaped alt. Closing is handled inside the overlay so the
@@ -312,6 +338,29 @@ export function App(): JSX.Element {
           repositoryName={settings.repositoryName}
           pullRequest={view.pr}
           onBack={() => setView({ kind: 'list' })}
+        />
+        <KeyboardHelpOverlay
+          open={helpOpen}
+          onClose={() => setHelpOpen(false)}
+        />
+      </div>
+    );
+  }
+
+  if (view.kind === 'create' && settings.repositoryName) {
+    return (
+      <div className="app">
+        <CreatePR
+          repositoryName={settings.repositoryName}
+          openPullRequests={prs}
+          onCancel={() => setView({ kind: 'list' })}
+          onCreated={(pr) => {
+            // The new PR is also the right landing place — replace the
+            // route with PRDetail for it. The PR list cache was invalidated
+            // by the provider, so navigating back to list will show it
+            // newest-first.
+            setView({ kind: 'detail', pr });
+          }}
         />
         <KeyboardHelpOverlay
           open={helpOpen}
@@ -354,6 +403,11 @@ export function App(): JSX.Element {
         onRefresh={() => void refresh(true)}
         loading={loading}
         onCancel={cancel}
+        onNewPullRequest={
+          isReadyToFetch(settings)
+            ? () => setView({ kind: 'create' })
+            : undefined
+        }
       />
       <div className="list-wrap">
         {showTruncationBanner && (

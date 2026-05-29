@@ -1,7 +1,10 @@
 import type {
   ApprovalAction,
+  BranchSummary,
+  BranchTip,
   CommentNode,
   CommentThread,
+  CreatePullRequestInput,
   DeleteCommentInput,
   ExpandLinesRequest,
   ExpandLinesResponse,
@@ -62,6 +65,46 @@ export interface ReviewProvider {
     pullRequestId: string,
     opts?: ReadOptions,
   ): Promise<PullRequestDetail>;
+
+  // Branches — used by the Create-PR flow. Returned alphabetical; implementations
+  // are expected to paginate internally and cache for a short TTL (branches
+  // turn over more often than repos but not so often that every picker open
+  // should hit the network).
+  listBranches(
+    repositoryName: string,
+    opts?: ReadOptions,
+  ): Promise<BranchSummary[]>;
+
+  // Resolve a branch name to its tip commit and read the commit message —
+  // used by the Create-PR flow to auto-fill title (subject) and description
+  // (body) when the user picks a source branch. Implementations may cache
+  // the (branchName → commitId) hop briefly; the commit itself is content-
+  // addressed and safe to cache forever.
+  getBranchTip(
+    repositoryName: string,
+    branchName: string,
+    opts?: ReadOptions,
+  ): Promise<BranchTip>;
+
+  // Pre-PR diff: what the diff WOULD look like if a PR was opened between
+  // these two refs right now. Implementations should resolve refs to commit
+  // IDs and route through the same diff pipeline as getDifferences /
+  // getCommitDifferences so the renderer's existing diff viewer renders it.
+  // pullRequestId on the result is the empty string (no PR exists yet).
+  getRefDifferences(
+    repositoryName: string,
+    sourceRef: string,
+    destinationRef: string,
+    opts?: ReadOptions,
+  ): Promise<PRDifferences>;
+
+  // Create a new pull request. Implementations are responsible for
+  // idempotency (e.g. generating a clientRequestToken). On success, the
+  // provider MUST invalidate any list/detail caches that would otherwise
+  // hide the new PR from the renderer's PR list. Returns the summary as
+  // it appears in the post-creation state — the caller typically navigates
+  // straight to the PR's detail view.
+  createPullRequest(input: CreatePullRequestInput): Promise<PullRequestSummary>;
 
   // Diffs
   getDifferences(
