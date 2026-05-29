@@ -8,7 +8,7 @@ import {
   statusForApi,
   type FilterState,
 } from './components/PRFilters';
-import { PRList } from './components/PRList';
+import { PRList, PRListSkeleton } from './components/PRList';
 import { PRDetail } from './components/PRDetail';
 import { CreatePR } from './components/CreatePR';
 import { KeyboardHelpOverlay } from './components/KeyboardHelpOverlay';
@@ -517,9 +517,10 @@ export function App(): JSX.Element {
           />
         ) : loading ? (
           // Empty list + active stream = first items haven't arrived yet.
-          // The chip in PRFilters has the counter; this just keeps the
-          // empty area from looking abandoned.
-          <div className="empty">Waiting for the first results…</div>
+          // Show the table skeleton so the structure is already in place; the
+          // chip in PRFilters carries the live counter. The skeleton swaps for
+          // the real list the instant the first PR streams in.
+          <PRListSkeleton withLink={!!settings.repositoryName} />
         ) : error ? null : (
           <div className="empty">
             {isReadyToFetch(settings)

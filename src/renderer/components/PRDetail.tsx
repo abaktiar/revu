@@ -109,41 +109,91 @@ export function PRDetail({
     const forceFresh = refreshToken > 0;
     const opts = forceFresh ? { forceFresh: true } : undefined;
 
-    Promise.all([
-      unwrap(api.prs.get(repositoryName, pullRequest.id, opts)),
-      unwrap(api.prs.differences(repositoryName, pullRequest.id, opts)),
-      unwrap(api.comments.list(repositoryName, pullRequest.id, opts)),
-      unwrap(api.drafts.list(pullRequest.id)),
-      unwrap(api.reviewed.list(pullRequest.id)),
-      unwrap(api.approval.get(repositoryName, pullRequest.id, opts)).catch(
-        () => null,
-      ),
-      unwrap(api.mergeability.get(repositoryName, pullRequest.id, opts)).catch(
-        () => null,
-      ),
-      // Commit list is informational — never block the diff view if the
-      // walk fails (e.g. permission denied on BatchGetCommits).
-      unwrap(api.prs.commits(repositoryName, pullRequest.id, opts)).catch(
-        () => [] as PullRequestCommit[],
-      ),
-    ])
-      .then(([d, diff, th, dr, rv, app, merge, cmts]) => {
-        if (cancelled) return;
-        setDetail(d);
-        setDifferences(diff);
-        setThreads(th);
-        setDrafts(dr);
-        setReviewed(rv);
-        setApproval(app);
-        setMergeability(merge);
-        setCommits(cmts);
-        setRefreshing(false);
+    // Progressive streaming: fire every read independently and paint each
+    // region the moment its data lands, rather than blocking the whole view on
+    // the slowest call (almost always `differences` — the diff computation).
+    // The PR detail (title/status/branches) and the differences (sidebar +
+    // diff) are the two structural loads; a hard failure on either surfaces
+    // the load-error view. Everything else is best-effort and folds in late:
+    // its failure degrades a region (no comments, no approval badge) instead
+    // of replacing a half-streamed page with an error.
+    const detailReq = unwrap(api.prs.get(repositoryName, pullRequest.id, opts));
+    detailReq
+      .then((d) => {
+        if (!cancelled) setDetail(d);
       })
       .catch((err: unknown) => {
-        if (cancelled) return;
-        setLoadError(err);
-        setRefreshing(false);
+        if (!cancelled) setLoadError(err);
       });
+
+    const diffReq = unwrap(
+      api.prs.differences(repositoryName, pullRequest.id, opts),
+    );
+    diffReq
+      .then((diff) => {
+        if (!cancelled) setDifferences(diff);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setLoadError(err);
+      });
+
+    unwrap(api.comments.list(repositoryName, pullRequest.id, opts))
+      .then((th) => {
+        if (!cancelled) setThreads(th);
+      })
+      .catch((err: unknown) => {
+        // Comments are secondary to the diff. A failure here leaves the
+        // threads empty rather than blanking the page the reviewer came for.
+        console.error('[pr-detail] comments load failed:', err);
+      });
+
+    unwrap(api.drafts.list(pullRequest.id))
+      .then((dr) => {
+        if (!cancelled) setDrafts(dr);
+      })
+      .catch((err: unknown) => {
+        console.error('[pr-detail] drafts load failed:', err);
+      });
+
+    unwrap(api.reviewed.list(pullRequest.id))
+      .then((rv) => {
+        if (!cancelled) setReviewed(rv);
+      })
+      .catch((err: unknown) => {
+        console.error('[pr-detail] reviewed-state load failed:', err);
+      });
+
+    unwrap(api.approval.get(repositoryName, pullRequest.id, opts))
+      .then((app) => {
+        if (!cancelled) setApproval(app);
+      })
+      .catch(() => {
+        if (!cancelled) setApproval(null);
+      });
+
+    unwrap(api.mergeability.get(repositoryName, pullRequest.id, opts))
+      .then((merge) => {
+        if (!cancelled) setMergeability(merge);
+      })
+      .catch(() => {
+        if (!cancelled) setMergeability(null);
+      });
+
+    // Commit list is informational — never block the diff view if the
+    // walk fails (e.g. permission denied on BatchGetCommits).
+    unwrap(api.prs.commits(repositoryName, pullRequest.id, opts))
+      .then((cmts) => {
+        if (!cancelled) setCommits(cmts);
+      })
+      .catch(() => {
+        if (!cancelled) setCommits([] as PullRequestCommit[]);
+      });
+
+    // The Refresh spinner clears once the two structural loads settle; the
+    // late-arriving secondaries keep streaming in behind it.
+    void Promise.allSettled([detailReq, diffReq]).then(() => {
+      if (!cancelled) setRefreshing(false);
+    });
 
     return () => {
       cancelled = true;
@@ -666,18 +716,17 @@ export function PRDetail({
     );
   }
 
-  if (!differences || !detail) {
-    return (
-      <div className="pr-detail">
-        <Toolbar {...toolbarProps} />
-        <div className="loading">Loading PR…</div>
-      </div>
-    );
-  }
+  // Structural loads still in flight (the two regions the diff + meta hang
+  // off). Drives the indeterminate sweep at the top of the detail so the
+  // streaming reveal reads as "still arriving," not "finished and empty."
+  const structuralLoading = !detail || !differences;
 
   return (
     <div className="pr-detail">
       <Toolbar {...toolbarProps} />
+      {structuralLoading && (
+        <div className="pr-load-bar" role="presentation" aria-hidden />
+      )}
       {actionError != null && !mergeOpen && !editOpen && (
         <ErrorBanner
           title="Action failed."
@@ -686,7 +735,7 @@ export function PRDetail({
           retryLabel="Dismiss"
         />
       )}
-      {metaOpen && (
+      {metaOpen && detail && (
         <PRMetadata
           detail={detail}
           differences={differences}
@@ -695,7 +744,7 @@ export function PRDetail({
           approvalCount={
             approval?.states.filter((s) => s.approvalState === 'APPROVE').length ?? 0
           }
-          fileCount={differences.files.length}
+          fileCount={differences ? differences.files.length : null}
           selfApproved={approval?.selfApproved ?? false}
           webUrl={webUrl}
         />
@@ -704,7 +753,7 @@ export function PRDetail({
         <FileSidebar
           tab={sidebarTab}
           onChangeTab={onChangeSidebarTab}
-          files={currentDiff?.files ?? differences.files}
+          files={currentDiff?.files ?? differences?.files ?? []}
           selectedPath={activeFile ?? undefined}
           commentCounts={viewMode === 'pr' ? commentCounts : EMPTY_COUNTS}
           reviewedPaths={viewMode === 'pr' ? reviewedPaths : EMPTY_PATHS}
@@ -735,20 +784,24 @@ export function PRDetail({
               retrying={commitDiffLoading}
             />
           ) : viewMode === 'commit' && !commitDiff ? (
-            <div className="loading">Loading commit diff…</div>
+            <DiffLoading label="Loading commit diff" />
+          ) : viewMode === 'pr' && !differences ? (
+            <DiffLoading label="Loading diff" />
           ) : !currentDiff || currentDiff.files.length === 0 || !ctx ? (
             <div className="empty">No files changed.</div>
           ) : (
-            <ContinuousDiff
-              ref={diffRef}
-              files={currentDiff.files}
-              threads={viewMode === 'pr' ? threads : EMPTY_THREADS}
-              drafts={viewMode === 'pr' ? drafts : EMPTY_DRAFTS}
-              reviewedPaths={viewMode === 'pr' ? reviewedPaths : EMPTY_PATHS}
-              ctx={ctx}
-              callbacks={callbacks}
-              onActiveFileChange={onActiveFileChange}
-            />
+            <div className="diff-stream">
+              <ContinuousDiff
+                ref={diffRef}
+                files={currentDiff.files}
+                threads={viewMode === 'pr' ? threads : EMPTY_THREADS}
+                drafts={viewMode === 'pr' ? drafts : EMPTY_DRAFTS}
+                reviewedPaths={viewMode === 'pr' ? reviewedPaths : EMPTY_PATHS}
+                ctx={ctx}
+                callbacks={callbacks}
+                onActiveFileChange={onActiveFileChange}
+              />
+            </div>
           )}
         </div>
         {showGeneral && generalComments.length > 0 && (
@@ -831,11 +884,29 @@ export function PRDetail({
       )}
       {finderOpen && (
         <FileFinder
-          files={currentDiff?.files ?? differences.files}
+          files={currentDiff?.files ?? differences?.files ?? []}
           onSelect={onSidebarSelect}
           onClose={() => setFinderOpen(false)}
         />
       )}
+    </div>
+  );
+}
+
+// Quiet, centered placeholder shown in the diff area while the diff (or a
+// per-commit diff) is still being computed in the main process. Three accent
+// dots pulse in sequence — enough motion to read as "working" without the
+// SaaS spinner the brand explicitly rejects. Flattens under
+// prefers-reduced-motion via the global reset in index.css.
+function DiffLoading({ label }: { label: string }): JSX.Element {
+  return (
+    <div className="diff-loading" role="status" aria-live="polite">
+      <span className="diff-loading-dots" aria-hidden>
+        <i />
+        <i />
+        <i />
+      </span>
+      <span className="diff-loading-text">{label}</span>
     </div>
   );
 }

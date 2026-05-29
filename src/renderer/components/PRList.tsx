@@ -178,6 +178,83 @@ export function PRList({ prs, repositoryName, onOpen }: Props): JSX.Element {
   );
 }
 
+// Ghost table shown while the first page of a fresh stream is still in flight
+// (list empty, session active). It carries the real column header and a set of
+// pulsing placeholder rows so the table structure is present immediately —
+// when the first real PR lands, App swaps this for the live <PRList> and the
+// header doesn't move. Product register prefers skeletons over a centered
+// spinner; the staggered pulse is the only motion. Flattens under
+// prefers-reduced-motion via the global reset in index.css.
+const SKELETON_TITLE_WIDTHS = [62, 48, 78, 40, 70, 54, 84, 46];
+
+export function PRListSkeleton({
+  rows = 8,
+  withLink = true,
+}: {
+  rows?: number;
+  withLink?: boolean;
+}): JSX.Element {
+  return (
+    <table className="prs prs-skeleton" aria-hidden role="presentation">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Title</th>
+          <th>Author</th>
+          <th>Target</th>
+          <th>Status</th>
+          <th>Approval</th>
+          <th>Updated</th>
+          {withLink && <th />}
+        </tr>
+      </thead>
+      <tbody>
+        {Array.from({ length: rows }).map((_, i) => (
+          <tr
+            key={i}
+            className="pr-skel-row"
+            // Staggers the pulse phase per row (read by the .sk children) so
+            // the placeholders ripple instead of blinking in unison.
+            style={{ '--skel-delay': `${i * 70}ms` } as React.CSSProperties}
+          >
+            <td>
+              <span className="sk" style={{ width: 30 }} />
+            </td>
+            <td>
+              <span
+                className="sk"
+                style={{
+                  width: `${SKELETON_TITLE_WIDTHS[i % SKELETON_TITLE_WIDTHS.length]}%`,
+                }}
+              />
+            </td>
+            <td>
+              <span className="sk" style={{ width: 84 }} />
+            </td>
+            <td>
+              <span className="sk" style={{ width: 132 }} />
+            </td>
+            <td>
+              <span className="sk sk-badge" />
+            </td>
+            <td>
+              <span className="sk sk-badge" />
+            </td>
+            <td>
+              <span className="sk" style={{ width: 64 }} />
+            </td>
+            {withLink && (
+              <td>
+                <span className="sk sk-dot" />
+              </td>
+            )}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
 function BranchPair({
   target,
 }: {

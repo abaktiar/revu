@@ -15,7 +15,9 @@ interface Props {
   mergeability: PullRequestMergeability | null;
   approval: PullRequestApprovalView | null;
   approvalCount: number;
-  fileCount: number;
+  // null while the differences are still streaming in — the row shows a quiet
+  // pulsing placeholder until the real count lands.
+  fileCount: number | null;
   selfApproved: boolean;
   // Provider-built deep-link to the PR's web UI. Undefined when the provider
   // can't construct one (e.g. no region configured).
@@ -82,9 +84,17 @@ export function PRMetadata({
           {selfApproved ? ' (you ✓)' : ''}
         </span>
         <span className="hint">·</span>
-        <span className="hint">
-          {fileCount} file{fileCount === 1 ? '' : 's'} changed
-        </span>
+        {fileCount === null ? (
+          <span
+            className="pr-meta-pending"
+            role="status"
+            aria-label="counting changed files"
+          />
+        ) : (
+          <span className="hint">
+            {fileCount} file{fileCount === 1 ? '' : 's'} changed
+          </span>
+        )}
       </div>
 
       <div className="pr-meta-row">

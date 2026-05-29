@@ -117,7 +117,11 @@ function LoadingChip({
   return (
     <div className="loading-chip" role="status" aria-live="polite">
       <div className="loading-chip-row">
-        <span className="loading-chip-spinner" aria-hidden />
+        <span className="loading-chip-dots" aria-hidden>
+          <i />
+          <i />
+          <i />
+        </span>
         <span className="loading-chip-text">
           {label} <strong>{counter}</strong>
         </span>

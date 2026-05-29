@@ -482,6 +482,60 @@ table.prs th:focus-visible {
   box-shadow: inset 0 0 0 2px var(--focus-ring);
 }
 
+/* Streamed rows fade in as they arrive (and on the skeleton -> real swap).
+ * Keyed by PR id, so a sort reorders without replaying the animation; only a
+ * freshly-mounted row animates. Opacity only — transforms on <tr> are fragile
+ * across table layout. */
+table.prs tbody tr.clickable {
+  animation: pr-row-in 200ms ease-out both;
+}
+
+@keyframes pr-row-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* ---- PR list skeleton (first page of a fresh stream) ----------------- */
+.prs-skeleton th {
+  cursor: default;
+}
+
+.prs-skeleton .sk {
+  display: inline-block;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--border);
+  opacity: 0.4;
+  /* Phase offset set per row by --skel-delay (see PRListSkeleton). */
+  animation: pr-skeleton-pulse 1300ms ease-in-out infinite;
+  animation-delay: var(--skel-delay, 0ms);
+}
+
+.prs-skeleton .sk-badge {
+  width: 52px;
+  height: 15px;
+}
+
+.prs-skeleton .sk-dot {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+}
+
+@keyframes pr-skeleton-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 0.8;
+  }
+}
+
 .id {
   color: var(--text-dim);
   font-family: ui-monospace, 'SF Mono', Menlo, monospace;
@@ -674,6 +728,152 @@ table.prs th:focus-visible {
   color: var(--text-dim);
 }
 
+/* ---- PR detail: progressive streaming load --------------------------
+ * Opening a PR no longer blocks the whole view on the slowest call. The
+ * toolbar paints instantly; the meta panel rises in when the detail lands;
+ * the diff fades in when the differences land. These three cues are the
+ * "overdrive" — a fast, native reveal, not a centered spinner. Every
+ * animation here flattens under the global prefers-reduced-motion reset
+ * further down this file. */
+
+/* Indeterminate sweep pinned under the toolbar while the structural loads
+ * (detail + differences) are still in flight. A single hairline-thin band of
+ * the one accent, edges feathered with an alpha mask (not a colour gradient —
+ * the One Voice Rule holds). Unmounts the instant both loads resolve. */
+.pr-load-bar {
+  position: relative;
+  flex: none;
+  height: 2px;
+  overflow: hidden;
+  background: transparent;
+}
+
+.pr-load-bar::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 32%;
+  background: var(--accent);
+  -webkit-mask-image: linear-gradient(
+    90deg,
+    transparent,
+    #000 35%,
+    #000 65%,
+    transparent
+  );
+  mask-image: linear-gradient(
+    90deg,
+    transparent,
+    #000 35%,
+    #000 65%,
+    transparent
+  );
+  animation: pr-load-sweep 1100ms cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+
+@keyframes pr-load-sweep {
+  from {
+    transform: translateX(-110%);
+  }
+  to {
+    transform: translateX(360%);
+  }
+}
+
+/* The diff area's own loading state: three accent dots pulsing in sequence.
+ * Deliberately not a spinner — the brand rejects the SaaS spinner. */
+.diff-loading {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--text-dim);
+}
+
+.diff-loading-text {
+  font-size: 12px;
+  letter-spacing: 0.3px;
+}
+
+.diff-loading-dots {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.diff-loading-dots i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 0.25;
+  animation: diff-loading-pulse 1000ms ease-in-out infinite;
+}
+
+.diff-loading-dots i:nth-child(2) {
+  animation-delay: 140ms;
+}
+
+.diff-loading-dots i:nth-child(3) {
+  animation-delay: 280ms;
+}
+
+@keyframes diff-loading-pulse {
+  0%,
+  100% {
+    opacity: 0.25;
+    transform: translateY(0);
+  }
+  40% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+
+/* Diff content fades in once it streams in. Opacity only — no transform: the
+ * .file-section children carry the content-visibility virtualization contract
+ * and must never be forced to lay out/paint by an ancestor transform. The
+ * wrapper inherits the flex layout so .continuous-diff still fills + scrolls. */
+.diff-stream {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  animation: pr-fade-in 200ms ease-out both;
+}
+
+@keyframes pr-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Pulsing placeholder standing in for "N files changed" until the differences
+ * land. A neutral pill, not a moving-gradient shimmer (single-voice rule). */
+.pr-meta-pending {
+  display: inline-block;
+  width: 58px;
+  height: 9px;
+  border-radius: 999px;
+  background: var(--border);
+  vertical-align: middle;
+  animation: pr-meta-pending-pulse 1100ms ease-in-out infinite;
+}
+
+@keyframes pr-meta-pending-pulse {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 0.85;
+  }
+}
+
 /* ErrorBanner: shared error UI rendered whenever an IPC call surfaces a
    ProviderError (AWS throttle, expired creds, access denied, etc.). The
    classified hint sits below the raw message so the user always sees a
@@ -763,17 +963,30 @@ table.prs th:focus-visible {
   font-variant-numeric: tabular-nums;
 }
 
-.loading-chip-spinner {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  border: 1.5px solid var(--border);
-  border-top-color: var(--accent);
-  animation: loading-chip-spin 700ms linear infinite;
+/* Three accent dots pulsing in sequence — the same loading vocabulary as the
+ * diff area, so the whole app speaks one language instead of a lone SaaS
+ * spinner the brand rejects. The determinate bar below carries the real
+ * progress; these just signal "live." */
+.loading-chip-dots {
+  display: inline-flex;
+  gap: 4px;
 }
 
-@keyframes loading-chip-spin {
-  to { transform: rotate(360deg); }
+.loading-chip-dots i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 0.25;
+  animation: diff-loading-pulse 1000ms ease-in-out infinite;
+}
+
+.loading-chip-dots i:nth-child(2) {
+  animation-delay: 140ms;
+}
+
+.loading-chip-dots i:nth-child(3) {
+  animation-delay: 280ms;
 }
 
 .loading-chip-cancel {
@@ -1133,6 +1346,20 @@ kbd {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  /* Rises in when the PR detail finishes streaming (the panel only mounts once
+   * `detail` lands). Part of the progressive-load reveal; see .pr-load-bar. */
+  animation: pr-region-rise 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes pr-region-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .pr-meta-row {
