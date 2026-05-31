@@ -1,4 +1,5 @@
 import type {
+  ActivityEvent,
   ApprovalAction,
   BranchSummary,
   BranchTip,
@@ -166,6 +167,17 @@ export interface ReviewProvider {
     pullRequestId: string,
     opts?: ReadOptions,
   ): Promise<PullRequestCommit[]>;
+
+  // Activity timeline — PR lifecycle events (created, status changes, source
+  // pushes, approvals, merge) merged with comment events into a single
+  // chronological feed (newest-first). Best-effort: implementations that can't
+  // read part of the stream (e.g. event permissions denied) should return what
+  // they can rather than throwing, so the timeline degrades gracefully.
+  listActivity(
+    repositoryName: string,
+    pullRequestId: string,
+    opts?: ReadOptions,
+  ): Promise<ActivityEvent[]>;
 
   // Approval
   getApprovalView(

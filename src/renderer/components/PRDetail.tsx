@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
+  ActivityEvent,
   ApprovalAction,
   CommentDraft,
   CommentThread,
@@ -63,6 +64,8 @@ export function PRDetail({
   const [mergeability, setMergeability] =
     useState<PullRequestMergeability | null>(null);
   const [commits, setCommits] = useState<PullRequestCommit[]>([]);
+  const [activity, setActivity] = useState<ActivityEvent[]>([]);
+  const [activityLoading, setActivityLoading] = useState(true);
   const [metaOpen, setMetaOpen] = useState(true);
   const [webUrl, setWebUrl] = useState<string | undefined>(undefined);
   const [postingThreadId, setPostingThreadId] = useState<string | null>(null);
@@ -187,6 +190,20 @@ export function PRDetail({
       })
       .catch(() => {
         if (!cancelled) setCommits([] as PullRequestCommit[]);
+      });
+
+    // Activity timeline — lifecycle events + comments, best-effort. Folds in
+    // late behind the diff; a failure just leaves the Activity tab empty.
+    setActivityLoading(true);
+    unwrap(api.prs.activity(repositoryName, pullRequest.id, opts))
+      .then((ev) => {
+        if (!cancelled) setActivity(ev);
+      })
+      .catch(() => {
+        if (!cancelled) setActivity([] as ActivityEvent[]);
+      })
+      .finally(() => {
+        if (!cancelled) setActivityLoading(false);
       });
 
     // The Refresh spinner clears once the two structural loads settle; the
@@ -325,6 +342,12 @@ export function PRDetail({
         api.comments.list(repositoryName, pullRequest.id),
       );
       setThreads(fresh);
+      // Comments are part of the activity feed, so keep the timeline in sync
+      // after a post/reply/delete. Best-effort: a failure here just leaves a
+      // slightly stale Activity tab, not a broken comment flow.
+      unwrap(api.prs.activity(repositoryName, pullRequest.id))
+        .then((ev) => setActivity(ev))
+        .catch(() => {});
     } catch (err) {
       setLoadError(err);
     }
@@ -763,6 +786,8 @@ export function PRDetail({
           commits={commits}
           selectedCommitId={selectedCommit?.id}
           onSelectCommit={onSidebarSelectCommit}
+          activity={activity}
+          activityLoading={activityLoading}
         />
         <div className="diff-area">
           {viewMode === 'commit' && selectedCommit && (

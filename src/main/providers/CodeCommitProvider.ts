@@ -39,6 +39,7 @@ import { randomUUID } from 'node:crypto';
 import { GetCallerIdentityCommand, STSClient } from '@aws-sdk/client-sts';
 import { fromIni, fromNodeProviderChain } from '@aws-sdk/credential-providers';
 import type {
+  ActivityEvent,
   ApprovalAction,
   ApprovalState,
   ApprovalStateEntry,
@@ -881,6 +882,64 @@ export class CodeCommitProvider implements ReviewProvider {
       .filter((t): t is CommentThread => t !== null);
     await putCached(NS.comments, cKey, threads, LIMITS.comments);
     return threads;
+  }
+
+  async listActivity(
+    repositoryName: string,
+    pullRequestId: string,
+    opts?: ReadOptions,
+  ): Promise<ActivityEvent[]> {
+    // Two independent best-effort reads in parallel: the raw PR event stream
+    // (created / status / source / approval / merge) and the comment threads.
+    // Either can fail on its own (e.g. event permissions denied on a
+    // restricted role); a failure on one still yields a partial timeline
+    // rather than an empty tab. fetchEventsSafe already swallows its own
+    // errors; we guard listComments the same way.
+    const [events, threads] = await Promise.all([
+      this.fetchEventsSafe(pullRequestId, opts?.forceFresh),
+      this.listComments(repositoryName, pullRequestId, opts).catch(
+        () => [] as CommentThread[],
+      ),
+    ]);
+
+    const out: ActivityEvent[] = [];
+    for (let i = 0; i < events.length; i++) {
+      const mapped = mapActivityEvent(events[i]!, i);
+      if (mapped) out.push(mapped);
+    }
+    // Flatten every comment to a lookup first so a reply can quote its parent
+    // (CodeCommit only gives us the parent's id via inReplyTo).
+    const byId = new Map<string, CommentNode>();
+    for (const t of threads) {
+      for (const c of t.comments) byId.set(c.id, c);
+    }
+    for (const t of threads) {
+      for (const c of t.comments) {
+        if (c.deleted) continue;
+        const parent = c.inReplyTo ? byId.get(c.inReplyTo) : undefined;
+        // A quote of a deleted (content-cleared) parent would be empty, so drop
+        // it — the row still flags itself as a reply, just without the quote.
+        const quotable = parent && !parent.deleted ? parent : undefined;
+        out.push({
+          id: `comment:${c.id}`,
+          type: 'comment',
+          actorArn: c.authorArn,
+          occurredAt: c.createdAt,
+          commentExcerpt: commentExcerpt(c.content),
+          filePath: t.filePath,
+          isReply: Boolean(c.inReplyTo),
+          replyToAuthorArn: quotable?.authorArn,
+          replyToExcerpt: quotable
+            ? commentExcerpt(quotable.content)
+            : undefined,
+        });
+      }
+    }
+
+    // Newest-first, matching the adjacent Commits sidebar tab. Entries with no
+    // parseable timestamp sort to the bottom rather than jumping to the top.
+    out.sort((a, b) => activitySortKey(b) - activitySortKey(a));
+    return out;
   }
 
   private async resolveCommits(
@@ -2104,4 +2163,88 @@ function mapComment(c: CCComment): CommentNode {
     lastModified: c.lastModifiedDate?.toISOString(),
     deleted: c.deleted,
   };
+}
+
+// Map a single CodeCommit DescribePullRequestEvents entry onto the
+// provider-agnostic ActivityEvent shape. Returns null for event subtypes we
+// don't surface in the timeline (e.g. approval-rule template events), so the
+// caller can skip them. `index` disambiguates the synthesized id since events
+// carry no id of their own.
+function mapActivityEvent(
+  ev: PullRequestEvent,
+  index: number,
+): ActivityEvent | null {
+  const base = {
+    actorArn: ev.actorArn,
+    occurredAt: ev.eventDate?.toISOString(),
+  };
+  switch (ev.pullRequestEventType) {
+    case 'PULL_REQUEST_CREATED':
+      return { id: `event:${index}`, type: 'created', ...base };
+    case 'PULL_REQUEST_STATUS_CHANGED': {
+      const status = ev.pullRequestStatusChangedEventMetadata?.pullRequestStatus;
+      return {
+        id: `event:${index}`,
+        type: 'statusChanged',
+        status: status === 'CLOSED' ? 'CLOSED' : 'OPEN',
+        ...base,
+      };
+    }
+    case 'PULL_REQUEST_SOURCE_REFERENCE_UPDATED': {
+      const m = ev.pullRequestSourceReferenceUpdatedEventMetadata;
+      return {
+        id: `event:${index}`,
+        type: 'sourceUpdated',
+        beforeCommitId: m?.beforeCommitId,
+        afterCommitId: m?.afterCommitId,
+        ...base,
+      };
+    }
+    case 'PULL_REQUEST_APPROVAL_STATE_CHANGED': {
+      // CodeCommit reports the approval status as APPROVE / REVOKE.
+      const s = ev.approvalStateChangedEventMetadata?.approvalStatus;
+      return {
+        id: `event:${index}`,
+        type: 'approvalStateChanged',
+        approvalState: s === 'APPROVE' ? 'APPROVE' : 'REVOKE',
+        ...base,
+      };
+    }
+    case 'PULL_REQUEST_MERGE_STATE_CHANGED': {
+      const merged =
+        ev.pullRequestMergedStateChangedEventMetadata?.mergeMetadata?.isMerged;
+      // The merge-state event also fires on un-merge bookkeeping; only surface
+      // the actual merge.
+      if (merged !== true) return null;
+      const option = ev.pullRequestMergedStateChangedEventMetadata?.mergeMetadata
+        ?.mergeOption as MergeOptionId | undefined;
+      return {
+        id: `event:${index}`,
+        type: 'merged',
+        mergedWith: option,
+        ...base,
+      };
+    }
+    default:
+      return null;
+  }
+}
+
+// First non-empty line of a comment, trimmed to a single-line preview for the
+// activity feed. The full body still lives in the inline thread / general
+// comments panel; the timeline only needs enough to recognize it.
+function commentExcerpt(content: string): string {
+  const firstLine =
+    content
+      .split('\n')
+      .map((l) => l.trim())
+      .find((l) => l.length > 0) ?? '';
+  const MAX = 140;
+  return firstLine.length > MAX ? `${firstLine.slice(0, MAX - 1)}…` : firstLine;
+}
+
+function activitySortKey(e: ActivityEvent): number {
+  if (!e.occurredAt) return -Infinity;
+  const t = Date.parse(e.occurredAt);
+  return Number.isNaN(t) ? -Infinity : t;
 }

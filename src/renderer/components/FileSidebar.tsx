@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import type {
+  ActivityEvent,
   DiffChangeType,
   FileDiffEntry,
   PullRequestCommit,
 } from '@shared/types';
 
-export type SidebarTab = 'files' | 'commits';
+export type SidebarTab = 'files' | 'commits' | 'activity';
 
 // Tree vs flat-list mode for the files panel, persisted across sessions so a
 // user who prefers one layout keeps it. Mirrors VS Code's "Source Control"
@@ -39,6 +40,10 @@ interface Props {
   commits: PullRequestCommit[];
   selectedCommitId?: string;
   onSelectCommit: (commit: PullRequestCommit) => void;
+  // Activity panel. Optional — the create-PR flow reuses this sidebar in a
+  // files-only mode where there's no PR (and so no activity) yet.
+  activity?: ActivityEvent[];
+  activityLoading?: boolean;
 }
 
 export function FileSidebar({
@@ -54,6 +59,8 @@ export function FileSidebar({
   commits,
   selectedCommitId,
   onSelectCommit,
+  activity = [],
+  activityLoading,
 }: Props): JSX.Element {
   return (
     <div className="file-sidebar">
@@ -78,6 +85,18 @@ export function FileSidebar({
         >
           Commits <span className="sidebar-tab-count">{commits.length}</span>
         </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'activity'}
+          className={`sidebar-tab${tab === 'activity' ? ' is-active' : ''}`}
+          onClick={() => onChangeTab('activity')}
+        >
+          Activity
+          {activity.length > 0 && (
+            <span className="sidebar-tab-count">{activity.length}</span>
+          )}
+        </button>
       </div>
       {tab === 'files' ? (
         <FilesPanel
@@ -89,12 +108,14 @@ export function FileSidebar({
           onToggleReviewed={onToggleReviewed}
           readOnly={filesReadOnly}
         />
-      ) : (
+      ) : tab === 'commits' ? (
         <CommitsPanel
           commits={commits}
           selectedCommitId={selectedCommitId}
           onSelectCommit={onSelectCommit}
         />
+      ) : (
+        <ActivityPanel activity={activity} loading={activityLoading} />
       )}
     </div>
   );
@@ -543,6 +564,146 @@ function CommitRow({
       </span>
     </li>
   );
+}
+
+// ---- Activity panel --------------------------------------------------
+
+function ActivityPanel({
+  activity,
+  loading,
+}: {
+  activity: ActivityEvent[];
+  loading?: boolean;
+}): JSX.Element {
+  if (activity.length === 0) {
+    return (
+      <ul>
+        <li className="empty-li">
+          {loading ? 'Loading activity…' : 'No activity yet.'}
+        </li>
+      </ul>
+    );
+  }
+  return (
+    <ul className="activity-list">
+      {activity.map((e) => (
+        <ActivityRow key={e.id} event={e} />
+      ))}
+    </ul>
+  );
+}
+
+function ActivityRow({ event }: { event: ActivityEvent }): JSX.Element {
+  const who = shortArn(event.actorArn);
+  return (
+    <li
+      className={`activity-item activity-${event.type}${
+        event.isReply ? ' is-reply' : ''
+      }`}
+    >
+      <span className="activity-icon" aria-hidden>
+        {activityIcon(event)}
+      </span>
+      <span className="activity-main">
+        <span className="activity-line">
+          <span className="activity-actor">{who}</span>{' '}
+          <span className="activity-verb">{activityVerb(event)}</span>
+        </span>
+        {event.type === 'comment' && (
+          <>
+            {event.isReply && event.replyToExcerpt && (
+              <span className="activity-quote" title={event.replyToExcerpt}>
+                {event.replyToExcerpt}
+              </span>
+            )}
+            {event.commentExcerpt && (
+              <span className="activity-excerpt" title={event.commentExcerpt}>
+                {event.filePath && (
+                  <span className="activity-file">
+                    {baseName(event.filePath)}:{' '}
+                  </span>
+                )}
+                {event.commentExcerpt}
+              </span>
+            )}
+          </>
+        )}
+        {event.occurredAt && (
+          <span className="activity-when" title={event.occurredAt}>
+            {fmtRel(event.occurredAt)}
+          </span>
+        )}
+      </span>
+    </li>
+  );
+}
+
+// Human-readable predicate for a timeline entry. The actor name is rendered
+// separately, so this is just the verb phrase that follows it.
+function activityVerb(e: ActivityEvent): string {
+  switch (e.type) {
+    case 'created':
+      return 'opened this pull request';
+    case 'statusChanged':
+      return e.status === 'CLOSED'
+        ? 'closed this pull request'
+        : 'reopened this pull request';
+    case 'sourceUpdated':
+      return 'pushed new commits';
+    case 'approvalStateChanged':
+      return e.approvalState === 'APPROVE' ? 'approved' : 'revoked approval';
+    case 'merged':
+      return e.mergedWith
+        ? `merged this pull request (${mergeLabel(e.mergedWith)})`
+        : 'merged this pull request';
+    case 'comment':
+      if (e.isReply) {
+        return e.replyToAuthorArn
+          ? `replied to ${shortArn(e.replyToAuthorArn)}`
+          : 'replied';
+      }
+      return 'commented';
+  }
+}
+
+function activityIcon(e: ActivityEvent): string {
+  switch (e.type) {
+    case 'created':
+      return '◆';
+    case 'statusChanged':
+      return '⊘';
+    case 'sourceUpdated':
+      return '↑';
+    case 'approvalStateChanged':
+      return '✓';
+    case 'merged':
+      return '⇄';
+    case 'comment':
+      return e.isReply ? '↩' : '💬';
+  }
+}
+
+function mergeLabel(opt: ActivityEvent['mergedWith']): string {
+  switch (opt) {
+    case 'FAST_FORWARD_MERGE':
+      return 'fast-forward';
+    case 'SQUASH_MERGE':
+      return 'squash';
+    case 'THREE_WAY_MERGE':
+      return '3-way';
+    default:
+      return 'merge';
+  }
+}
+
+function baseName(path: string): string {
+  return path.split('/').pop() ?? path;
+}
+
+function shortArn(arn: string | undefined): string {
+  if (!arn) return 'Someone';
+  const i = arn.lastIndexOf('/');
+  return i >= 0 ? arn.slice(i + 1) : arn;
 }
 
 function subjectOf(msg: string): string {

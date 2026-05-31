@@ -1,5 +1,6 @@
 import { ipcMain } from 'electron';
 import type {
+  ActivityEvent,
   AppSettings,
   ApprovalAction,
   AwsProfileInfo,
@@ -79,6 +80,7 @@ export const IPC = {
   prsSetStatus: 'prs:set-status',
   prsUpdate: 'prs:update',
   prsCommits: 'prs:commits',
+  prsActivity: 'prs:activity',
   prsFilePair: 'prs:file-pair',
   prsFileDiff: 'prs:file-diff',
   prsExpandLines: 'prs:expand-lines',
@@ -400,6 +402,23 @@ export function registerIpc(): void {
         return ok(
           await p.listPullRequestCommits(repositoryName, pullRequestId, opts),
         );
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IPC.prsActivity,
+    async (
+      _e,
+      repositoryName: string,
+      pullRequestId: string,
+      opts?: { forceFresh?: boolean },
+    ): Promise<IpcResult<ActivityEvent[]>> => {
+      try {
+        const p = await getProvider();
+        return ok(await p.listActivity(repositoryName, pullRequestId, opts));
       } catch (err) {
         return fail(err);
       }

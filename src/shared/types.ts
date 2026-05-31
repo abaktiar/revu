@@ -448,6 +448,53 @@ export interface PullRequestMergeability {
   reason?: string;
 }
 
+// ---- Activity feed ----------------------------------------------------
+
+// One entry in the PR's chronological activity timeline. Provider-agnostic:
+// the CodeCommit provider sources lifecycle events from
+// DescribePullRequestEvents and folds comment threads in as `comment` events,
+// so the renderer sees a single ordered feed of everything that happened on
+// the PR. Other providers map their own event streams onto the same shape.
+export type ActivityEventType =
+  | 'created' // PR opened
+  | 'statusChanged' // closed or reopened (see `status`)
+  | 'sourceUpdated' // new commits pushed to the source branch
+  | 'approvalStateChanged' // someone approved or revoked (see `approvalState`)
+  | 'merged' // PR merged
+  | 'comment'; // a comment was posted (general or line-anchored)
+
+export interface ActivityEvent {
+  // Stable id for React keys. Synthesized by the provider — CodeCommit events
+  // carry no id of their own, so we derive one from type + index/comment id.
+  id: string;
+  type: ActivityEventType;
+  // ARN of whoever triggered the event; for comments, the comment author.
+  actorArn?: string;
+  // ISO timestamp. Entries without a known time sort to the end of the feed.
+  occurredAt?: string;
+  // type === 'statusChanged': the status the PR moved to.
+  status?: PRStatus;
+  // type === 'approvalStateChanged': whether it was an approve or a revoke.
+  approvalState?: 'APPROVE' | 'REVOKE';
+  // type === 'sourceUpdated': the source-branch tips before/after the push.
+  beforeCommitId?: string;
+  afterCommitId?: string;
+  // type === 'merged': which strategy the merge used, when known.
+  mergedWith?: MergeOptionId;
+  // type === 'comment': a short preview of the body and (if line-anchored) the
+  // file it was left on.
+  commentExcerpt?: string;
+  filePath?: string;
+  // type === 'comment': reply linkage. `isReply` is true when the comment
+  // answers an earlier one; `replyToAuthorArn` / `replyToExcerpt` quote that
+  // parent (when it's resolvable) so the timeline shows what's being replied
+  // to. Both quote fields are absent if the parent was deleted or isn't in the
+  // loaded thread set.
+  isReply?: boolean;
+  replyToAuthorArn?: string;
+  replyToExcerpt?: string;
+}
+
 // ---- PR mutations -----------------------------------------------------
 
 export interface MergePullRequestInput {

@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
+  ActivityEvent,
   AppSettings,
   ApprovalAction,
   AwsProfileInfo,
@@ -60,6 +61,7 @@ const CH = {
   prsSetStatus: 'prs:set-status',
   prsUpdate: 'prs:update',
   prsCommits: 'prs:commits',
+  prsActivity: 'prs:activity',
   prsFilePair: 'prs:file-pair',
   prsFileDiff: 'prs:file-diff',
   prsExpandLines: 'prs:expand-lines',
@@ -181,6 +183,12 @@ const api = {
       opts?: ReadOpts,
     ): Promise<IpcResult<PullRequestCommit[]>> =>
       ipcRenderer.invoke(CH.prsCommits, repositoryName, pullRequestId, opts),
+    activity: (
+      repositoryName: string,
+      pullRequestId: string,
+      opts?: ReadOpts,
+    ): Promise<IpcResult<ActivityEvent[]>> =>
+      ipcRenderer.invoke(CH.prsActivity, repositoryName, pullRequestId, opts),
     commitDifferences: (
       repositoryName: string,
       beforeCommitId: string,
