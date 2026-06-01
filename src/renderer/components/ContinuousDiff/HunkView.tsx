@@ -286,7 +286,9 @@ function ThreadRow({
 }): JSX.Element {
   const posting = ctx.postingThreadId === thread.threadId;
   return (
-    <div className="drow drow-thread">
+    // data-thread-id lets the diff's scrollToComment() find this row and bring
+    // it into view when a timeline entry is clicked.
+    <div className="drow drow-thread" data-thread-id={thread.threadId}>
       <div className="thread-row-content">
         <InlineThread
           thread={thread}

@@ -564,6 +564,22 @@ export function PRDetail({
     setSelectedCommit(null);
   }, []);
 
+  // Clicking a line-anchored comment in the Activity timeline scrolls the diff
+  // to that thread. Comment threads only render in the PR diff (the per-commit
+  // view is read-only and shows none), so drop back to it first; the diff keeps
+  // the pending reveal and acts on it once the PR sections render.
+  const onActivitySelect = useCallback((event: ActivityEvent): void => {
+    if (!event.filePath || !event.threadId) return;
+    setSelectedCommit(null);
+    const reduced = window.matchMedia(
+      '(prefers-reduced-motion: reduce)',
+    ).matches;
+    diffRef.current?.scrollToComment(event.threadId, event.filePath, {
+      behavior: reduced ? 'auto' : 'smooth',
+      block: 'start',
+    });
+  }, []);
+
   const applyApproval = useCallback(
     async (action: ApprovalAction): Promise<void> => {
       setApprovalBusy(true);
@@ -788,6 +804,7 @@ export function PRDetail({
           onSelectCommit={onSidebarSelectCommit}
           activity={activity}
           activityLoading={activityLoading}
+          onActivitySelect={onActivitySelect}
         />
         <div className="diff-area">
           {viewMode === 'commit' && selectedCommit && (

@@ -853,23 +853,25 @@ export class CodeCommitProvider implements ReviewProvider {
       if (cached) return cached;
     }
 
-    // CodeCommit's GetCommentsForPullRequest requires beforeCommitId and
-    // afterCommitId in practice (the docs say "optional" but the service
-    // returns CommitIdRequiredException when they're omitted). Derive them
-    // from the PR target — same commits the diff viewer uses.
-    const { beforeCommitId, afterCommitId } =
-      await this.resolveCommits(repositoryName, pullRequestId);
-
+    // Fetch EVERY comment on the PR by sending only the pullRequestId.
+    //
+    // repositoryName + beforeCommitId + afterCommitId form a *conditional
+    // group* in this API: supply any of them and the other two become required,
+    // and the service then filters the result to that single commit comparison.
+    // An earlier version passed the PR's current source/destination commits,
+    // which meant the moment a developer pushed a new commit, every comment made
+    // against the previous revision was silently dropped — the comments still
+    // existed in CodeCommit (and showed in the AWS console) but vanished from
+    // our diff view and activity timeline. Omitting all three returns the full,
+    // revision-spanning comment set. (The CommitIdRequiredException the previous
+    // note worried about only fires when repositoryName is present *without* the
+    // commit ids — not when all three are omitted.) Each returned group still
+    // carries its own before/afterCommitId via mapCommentGroup, so callers can
+    // still tell which revision a thread belongs to.
     const raw: CommentsForPullRequest[] = [];
     let nextToken: string | undefined;
     do {
-      const input = {
-        pullRequestId,
-        repositoryName,
-        beforeCommitId,
-        afterCommitId,
-        nextToken,
-      };
+      const input = { pullRequestId, nextToken };
       const res = await this.cc('GetCommentsForPullRequest', input, (i) =>
         this.client.send(new GetCommentsForPullRequestCommand(i)),
       );
@@ -927,6 +929,12 @@ export class CodeCommitProvider implements ReviewProvider {
           occurredAt: c.createdAt,
           commentExcerpt: commentExcerpt(c.content),
           filePath: t.filePath,
+          // Carry the thread's location so the renderer can scroll the diff to
+          // this exact thread. Only meaningful for line-anchored comments; for
+          // general PR comments t.filePath is undefined and the row is inert.
+          threadId: t.threadId,
+          filePosition: t.filePosition,
+          relativeFileVersion: t.relativeFileVersion,
           isReply: Boolean(c.inReplyTo),
           replyToAuthorArn: quotable?.authorArn,
           replyToExcerpt: quotable
@@ -940,32 +948,6 @@ export class CodeCommitProvider implements ReviewProvider {
     // parseable timestamp sort to the bottom rather than jumping to the top.
     out.sort((a, b) => activitySortKey(b) - activitySortKey(a));
     return out;
-  }
-
-  private async resolveCommits(
-    repositoryName: string,
-    pullRequestId: string,
-  ): Promise<{ beforeCommitId: string; afterCommitId: string }> {
-    const pr = await this.getPullRequest(repositoryName, pullRequestId);
-    const target =
-      pr.targets.find(
-        (t) => t.repositoryName.toLowerCase() === repositoryName.toLowerCase(),
-      ) ?? pr.targets[0];
-    if (!target) {
-      throw new Error(`Pull request ${pullRequestId} has no targets.`);
-    }
-    const afterCommitId = nonEmpty(target.sourceCommitId);
-    const beforeCommitId =
-      nonEmpty(target.mergeBase) ?? nonEmpty(target.destinationCommitId);
-    if (!afterCommitId || !beforeCommitId) {
-      throw new Error(
-        `Pull request ${pullRequestId} is missing commit ids ` +
-          `(sourceCommitId=${j(target.sourceCommitId)}, ` +
-          `destinationCommitId=${j(target.destinationCommitId)}, ` +
-          `mergeBase=${j(target.mergeBase)}).`,
-      );
-    }
-    return { beforeCommitId, afterCommitId };
   }
 
   async postComment(input: PostCommentInput): Promise<CommentThread> {

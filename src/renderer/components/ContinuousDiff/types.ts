@@ -47,6 +47,17 @@ export interface DiffContext {
   readOnly?: boolean;
 }
 
+// A request to bring a specific comment thread into view. Created by
+// ContinuousDiff.scrollToComment(), delivered to the one FileDiffSection whose
+// path matches, which force-loads + expands the file and scrolls to the thread.
+export interface RevealTarget {
+  filePath: string;
+  threadId: string;
+  // Bumped on every scrollToComment call so re-selecting the same thread
+  // re-triggers the reveal even when filePath + threadId are unchanged.
+  nonce: number;
+}
+
 export interface FileSectionApi {
   // The active file is the topmost file whose section is currently visible.
   registerSection: (path: string, el: HTMLDivElement) => void;

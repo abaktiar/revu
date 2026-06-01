@@ -2553,6 +2553,41 @@ table.prs tr.clickable {
   color: var(--text-dim);
 }
 
+/* A line-anchored comment row is a button into the diff: pointer + a quiet
+ * hover wash, and a focus ring (it's keyboard-activatable via role=button). */
+.activity-item.is-navigable {
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.activity-item.is-navigable:hover {
+  background: rgba(var(--accent-rgb), 0.08);
+}
+
+.activity-item.is-navigable:focus-visible {
+  outline: none;
+  background: rgba(var(--accent-rgb), 0.1);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+/* Brief pulse on the thread the timeline jumped to, so the eye lands on it
+ * once the scroll settles. Added imperatively by FileDiffSection's reveal
+ * driver; plays once and resolves back to the row's resting background.
+ * (Under prefers-reduced-motion the global reset collapses this to no-op,
+ * leaving just the centered scroll — which is the intended affordance there.) */
+.drow-thread.thread-flash {
+  animation: thread-flash 1.5s ease-out 1;
+}
+
+@keyframes thread-flash {
+  0% {
+    background: rgba(var(--accent-rgb), 0.28);
+  }
+  100% {
+    background: var(--panel);
+  }
+}
+
 /* ---- Commit banner (above the diff while viewing a commit) ---------- */
 
 .commit-banner {

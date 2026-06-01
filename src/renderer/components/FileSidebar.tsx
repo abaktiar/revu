@@ -44,6 +44,8 @@ interface Props {
   // files-only mode where there's no PR (and so no activity) yet.
   activity?: ActivityEvent[];
   activityLoading?: boolean;
+  // Clicking a line-anchored comment in the timeline scrolls the diff to it.
+  onActivitySelect?: (event: ActivityEvent) => void;
 }
 
 export function FileSidebar({
@@ -61,6 +63,7 @@ export function FileSidebar({
   onSelectCommit,
   activity = [],
   activityLoading,
+  onActivitySelect,
 }: Props): JSX.Element {
   return (
     <div className="file-sidebar">
@@ -115,7 +118,11 @@ export function FileSidebar({
           onSelectCommit={onSelectCommit}
         />
       ) : (
-        <ActivityPanel activity={activity} loading={activityLoading} />
+        <ActivityPanel
+          activity={activity}
+          loading={activityLoading}
+          onNavigate={onActivitySelect}
+        />
       )}
     </div>
   );
@@ -571,9 +578,11 @@ function CommitRow({
 function ActivityPanel({
   activity,
   loading,
+  onNavigate,
 }: {
   activity: ActivityEvent[];
   loading?: boolean;
+  onNavigate?: (event: ActivityEvent) => void;
 }): JSX.Element {
   if (activity.length === 0) {
     return (
@@ -587,19 +596,50 @@ function ActivityPanel({
   return (
     <ul className="activity-list">
       {activity.map((e) => (
-        <ActivityRow key={e.id} event={e} />
+        <ActivityRow key={e.id} event={e} onNavigate={onNavigate} />
       ))}
     </ul>
   );
 }
 
-function ActivityRow({ event }: { event: ActivityEvent }): JSX.Element {
+function ActivityRow({
+  event,
+  onNavigate,
+}: {
+  event: ActivityEvent;
+  onNavigate?: (event: ActivityEvent) => void;
+}): JSX.Element {
   const who = shortArn(event.actorArn);
+  // Only a line-anchored comment can jump to a thread in the diff. General PR
+  // comments (no filePath) and lifecycle events have no location, so they stay
+  // inert. threadId is what the diff uses to find the rendered row.
+  const navigable =
+    !!onNavigate &&
+    event.type === 'comment' &&
+    !!event.filePath &&
+    !!event.threadId;
+  const onActivate = navigable ? () => onNavigate!(event) : undefined;
   return (
     <li
       className={`activity-item activity-${event.type}${
         event.isReply ? ' is-reply' : ''
-      }`}
+      }${navigable ? ' is-navigable' : ''}`}
+      role={navigable ? 'button' : undefined}
+      tabIndex={navigable ? 0 : undefined}
+      title={
+        navigable ? `Go to comment on ${baseName(event.filePath!)}` : undefined
+      }
+      onClick={onActivate}
+      onKeyDown={
+        navigable
+          ? (ev) => {
+              if (ev.key === 'Enter' || ev.key === ' ') {
+                ev.preventDefault();
+                onActivate?.();
+              }
+            }
+          : undefined
+      }
     >
       <span className="activity-icon" aria-hidden>
         {activityIcon(event)}

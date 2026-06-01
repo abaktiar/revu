@@ -17,6 +17,7 @@ import type {
   ComposerLocation,
   DiffCallbacks,
   DiffContext,
+  RevealTarget,
 } from './types';
 
 interface Props {
@@ -32,6 +33,14 @@ interface Props {
 export interface ContinuousDiffHandle {
   scrollToFile: (path: string, opts?: ScrollIntoViewOptions) => void;
   scrollToFileBy: (offset: number) => void;
+  // Bring a specific comment thread into view — used by the Activity timeline.
+  // Loads + expands the containing file as needed, then scrolls to + briefly
+  // highlights the thread. No-op if the file isn't part of the current diff.
+  scrollToComment: (
+    threadId: string,
+    filePath: string,
+    opts?: ScrollIntoViewOptions,
+  ) => void;
 }
 
 // Stable empty refs so memoized children that get an "I have no threads/drafts
@@ -53,6 +62,11 @@ export const ContinuousDiff = forwardRef<ContinuousDiffHandle, Props>(
     ref,
   ) {
     const [composerAt, setComposerAt] = useState<ComposerLocation | null>(null);
+    // Pending "scroll to this thread" request. Only the matching FileDiffSection
+    // acts on it; everyone else gets `null` so their memo stays intact.
+    const [revealTarget, setRevealTarget] = useState<RevealTarget | null>(null);
+    const revealNonceRef = useRef(0);
+    const clearReveal = useCallback(() => setRevealTarget(null), []);
     const nodesRef = useRef<Map<string, HTMLDivElement>>(new Map());
     const visibleRef = useRef<Set<string>>(new Set());
     const orderRef = useRef<string[]>([]);
@@ -182,7 +196,20 @@ export const ContinuousDiff = forwardRef<ContinuousDiffHandle, Props>(
           const target = ordered[targetIdx];
           if (target) scrollToFile(target);
         };
-        return { scrollToFile, scrollToFileBy };
+        const scrollToComment = (
+          threadId: string,
+          filePath: string,
+          opts?: ScrollIntoViewOptions,
+        ): void => {
+          // Start moving toward the file right away (its <section> root is
+          // always mounted), then hand the precise work to the matching
+          // FileDiffSection: it force-loads + expands the file as needed and
+          // scrolls to the exact thread once that row is in the DOM.
+          scrollToFile(filePath, opts);
+          revealNonceRef.current += 1;
+          setRevealTarget({ filePath, threadId, nonce: revealNonceRef.current });
+        };
+        return { scrollToFile, scrollToFileBy, scrollToComment };
       },
       [],
     );
@@ -221,6 +248,12 @@ export const ContinuousDiff = forwardRef<ContinuousDiffHandle, Props>(
               composerAt={composerForFile}
               ctx={ctx}
               callbacks={callbacks}
+              reveal={
+                revealTarget && revealTarget.filePath === f.path
+                  ? revealTarget
+                  : null
+              }
+              onRevealComplete={clearReveal}
               onOpenComposer={onOpenComposer}
               onCloseComposer={onCloseComposer}
               onVisibilityChange={onVisibilityChange}

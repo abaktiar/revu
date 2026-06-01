@@ -23,6 +23,7 @@ import {
   type ComposerLocation,
   type DiffCallbacks,
   type DiffContext,
+  type RevealTarget,
 } from './types';
 import { HunkView } from './HunkView';
 import { ExpandGap } from './ExpandGap';
@@ -53,6 +54,10 @@ interface Props {
   composerAt: ComposerLocation | null;
   ctx: DiffContext;
   callbacks: DiffCallbacks;
+  // Non-null only for the file a timeline "scroll to comment" click targeted.
+  // ContinuousDiff passes `null` to every other section so their memo holds.
+  reveal: RevealTarget | null;
+  onRevealComplete: () => void;
   onOpenComposer: (loc: ComposerLocation) => void;
   onCloseComposer: () => void;
   onVisibilityChange: (path: string, visible: boolean) => void;
@@ -67,6 +72,8 @@ function FileDiffSectionImpl({
   composerAt,
   ctx,
   callbacks,
+  reveal,
+  onRevealComplete,
   onOpenComposer,
   onCloseComposer,
   onVisibilityChange,
@@ -254,6 +261,50 @@ function FileDiffSectionImpl({
   function onInsertExpansion(synthetic: DiffHunk): void {
     setExtraHunks((cur) => [...cur, synthetic]);
   }
+
+  // Reveal driver: when this file is the target of a timeline "scroll to
+  // comment" click, force it loaded + expanded, then scroll the thread row into
+  // view and flash it. The effect re-runs as the file loads (renderDiff /
+  // allHunks change) and as it expands (collapsed flips) — including when the
+  // post-load auto-collapse fires — so it keeps retrying until the row exists.
+  // A hunk containing a thread always force-mounts (see HunkView), so once the
+  // file is loaded and open the row is guaranteed to be in the DOM.
+  useEffect(() => {
+    if (!reveal) return;
+    setHasLoaded(true); // no-op once already loaded
+    if (collapsed) {
+      setCollapsed(false);
+      setAutoCollapsed(false);
+      return; // wait for the expanded render before searching for the row
+    }
+    const root = sectionRef.current;
+    if (!root) return;
+    const node = root.querySelector<HTMLElement>(
+      `[data-thread-id="${CSS.escape(reveal.threadId)}"]`,
+    );
+    if (!node) return; // not in the DOM yet; a later state change re-runs this
+    const reduced = window.matchMedia(
+      '(prefers-reduced-motion: reduce)',
+    ).matches;
+    node.scrollIntoView({
+      behavior: reduced ? 'auto' : 'smooth',
+      block: 'center',
+    });
+    // Restart the flash even if the class is somehow still present.
+    node.classList.remove('thread-flash');
+    void node.offsetWidth; // force reflow so the animation replays
+    node.classList.add('thread-flash');
+    onRevealComplete();
+  }, [reveal, collapsed, renderDiff, allHunks, onRevealComplete]);
+
+  // Safety valve: always clear the reveal request, even if the thread never
+  // renders (e.g. an outdated comment whose line isn't in the current diff —
+  // we've already scrolled to the file, which is the best we can do).
+  useEffect(() => {
+    if (!reveal) return;
+    const t = setTimeout(onRevealComplete, 3000);
+    return () => clearTimeout(t);
+  }, [reveal, onRevealComplete]);
 
   return (
     <section

@@ -485,6 +485,13 @@ export interface ActivityEvent {
   // file it was left on.
   commentExcerpt?: string;
   filePath?: string;
+  // type === 'comment': locating info so the timeline row can scroll the diff
+  // to the exact thread. `threadId` targets the rendered thread node;
+  // `filePosition` + `relativeFileVersion` describe the anchored line. All
+  // absent for general (non-file) PR comments, which aren't navigable.
+  threadId?: string;
+  filePosition?: number;
+  relativeFileVersion?: RelativeFileVersion;
   // type === 'comment': reply linkage. `isReply` is true when the comment
   // answers an earlier one; `replyToAuthorArn` / `replyToExcerpt` quote that
   // parent (when it's resolvable) so the timeline shows what's being replied
