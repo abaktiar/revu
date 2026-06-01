@@ -31,7 +31,7 @@ function createWindow(): void {
     minWidth: 960,
     minHeight: 600,
     show: false,
-    title: 'revu',
+    title: 'revu for CodeCommit',
     ...(devIcon && !devIcon.isEmpty() ? { icon: devIcon } : {}),
     transparent: isMac,
     backgroundColor: isMac ? '#00000000' : '#0a0a0a',

@@ -464,7 +464,9 @@ export function App(): JSX.Element {
   return (
     <div className="app">
       <div className="topbar">
-        <div className="brand">revu</div>
+        <div className="brand">
+          revu<span className="brand-scope">for CodeCommit</span>
+        </div>
         <RepoSwitcher
           current={settings.repositoryName}
           favorites={settings.favoriteRepos}

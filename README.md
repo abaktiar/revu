@@ -1,4 +1,4 @@
-# revu
+# revu for CodeCommit
 
 A fast, native-feeling desktop app for reviewing **AWS CodeCommit** pull requests
 locally — built for diffs that other tools choke on.

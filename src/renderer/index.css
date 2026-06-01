@@ -234,6 +234,16 @@ textarea:focus {
 .topbar .brand {
   font-weight: 600;
   letter-spacing: 0.5px;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.topbar .brand .brand-scope {
+  font-weight: 500;
+  font-size: 0.78em;
+  letter-spacing: 0;
+  color: var(--text-dim);
 }
 
 .topbar .grow {
