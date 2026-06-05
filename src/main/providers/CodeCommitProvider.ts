@@ -891,16 +891,24 @@ export class CodeCommitProvider implements ReviewProvider {
     pullRequestId: string,
     opts?: ReadOptions,
   ): Promise<ActivityEvent[]> {
-    // Two independent best-effort reads in parallel: the raw PR event stream
-    // (created / status / source / approval / merge) and the comment threads.
-    // Either can fail on its own (e.g. event permissions denied on a
-    // restricted role); a failure on one still yields a partial timeline
-    // rather than an empty tab. fetchEventsSafe already swallows its own
-    // errors; we guard listComments the same way.
-    const [events, threads] = await Promise.all([
+    // Three independent best-effort reads in parallel: the raw PR event
+    // stream (created / status / source / approval / merge), the comment
+    // threads, and the PR's commit list. Any one of them can fail on its
+    // own (e.g. event permissions denied, BatchGetCommits throttled) and we
+    // still surface the rest. fetchEventsSafe already swallows its own
+    // errors; listComments and listPullRequestCommits are guarded the
+    // same way. The commit walk is the source of truth for per-commit
+    // activity rows — the `sourceUpdated` event from CodeCommit only
+    // reports the push, never the individual commits, and never fires for
+    // the commits that already existed on the source branch before the PR
+    // was opened.
+    const [events, threads, commits] = await Promise.all([
       this.fetchEventsSafe(pullRequestId, opts?.forceFresh),
       this.listComments(repositoryName, pullRequestId, opts).catch(
         () => [] as CommentThread[],
+      ),
+      this.listPullRequestCommits(repositoryName, pullRequestId, opts).catch(
+        () => [] as PullRequestCommit[],
       ),
     ]);
 
@@ -942,6 +950,34 @@ export class CodeCommitProvider implements ReviewProvider {
             : undefined,
         });
       }
+    }
+
+    // If we got the commit walk, surface one activity row per commit and
+    // drop the sourceUpdated events (the top commit IS the most recent
+    // push, and the per-commit rows give finer-grained info). A failed or
+    // empty walk (e.g. merged PR where source tip === merge base) leaves
+    // the sourceUpdated events in place as a fallback so the timeline
+    // stays informative.
+    if (commits.length > 0) {
+      const filtered = out.filter((e) => e.type !== 'sourceUpdated');
+      for (const c of commits) {
+        filtered.push({
+          id: `commit:${c.id}`,
+          type: 'commit',
+          // Committers and authors don't have AWS identities, so there's
+          // no ARN to surface — just the human name. Prefer committer
+          // (the person who actually applied the commit) over author.
+          actorName: c.committerName ?? c.authorName,
+          // Sort key reads `occurredAt`; the committer date is the
+          // canonical "when this landed" and author date is the fallback
+          // for commits where the committer didn't re-stamp.
+          occurredAt: c.committerDate ?? c.authorDate,
+          commitId: c.id,
+          commitMessage: c.message,
+        });
+      }
+      filtered.sort((a, b) => activitySortKey(b) - activitySortKey(a));
+      return filtered;
     }
 
     // Newest-first, matching the adjacent Commits sidebar tab. Entries with no

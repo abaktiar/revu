@@ -487,8 +487,6 @@ export function CreatePR({
           onSelect={onSidebarSelect}
           onToggleReviewed={noop}
           filesReadOnly
-          commits={[]}
-          onSelectCommit={noop}
         />
         <div className="diff-area">
           {diffError ? (

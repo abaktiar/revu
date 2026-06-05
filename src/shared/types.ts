@@ -461,7 +461,8 @@ export type ActivityEventType =
   | 'sourceUpdated' // new commits pushed to the source branch
   | 'approvalStateChanged' // someone approved or revoked (see `approvalState`)
   | 'merged' // PR merged
-  | 'comment'; // a comment was posted (general or line-anchored)
+  | 'comment' // a comment was posted (general or line-anchored)
+  | 'commit'; // a commit on the PR's source branch (one entry per commit)
 
 export interface ActivityEvent {
   // Stable id for React keys. Synthesized by the provider — CodeCommit events
@@ -469,7 +470,15 @@ export interface ActivityEvent {
   id: string;
   type: ActivityEventType;
   // ARN of whoever triggered the event; for comments, the comment author.
+  // Absent for events where only a plain name is available (commits — the
+  // git author/committer has no AWS identity by default). The renderer
+  // falls back to `actorName` in that case.
   actorArn?: string;
+  // Plain-text display name for the actor. Used for commit events (and any
+  // future event type whose actor isn't an IAM principal). When both are
+  // set, `actorName` wins on the row so a human name is always preferred
+  // over a raw ARN tail.
+  actorName?: string;
   // ISO timestamp. Entries without a known time sort to the end of the feed.
   occurredAt?: string;
   // type === 'statusChanged': the status the PR moved to.
@@ -500,6 +509,11 @@ export interface ActivityEvent {
   isReply?: boolean;
   replyToAuthorArn?: string;
   replyToExcerpt?: string;
+  // type === 'commit': the full commit SHA (used for click-to-jump into the
+  // per-commit diff) and the full commit message (the row shows the first
+  // line; the full body is the row's tooltip).
+  commitId?: string;
+  commitMessage?: string;
 }
 
 // ---- PR mutations -----------------------------------------------------

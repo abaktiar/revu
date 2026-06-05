@@ -3,7 +3,6 @@ import type {
   ActivityEvent,
   DiffChangeType,
   FileDiffEntry,
-  PullRequestCommit,
 } from '@shared/types';
 import {
   ArrowUp,
@@ -11,6 +10,7 @@ import {
   ChevronDown,
   ChevronRight,
   GitBranch,
+  GitCommit,
   GitMerge,
   MessageSquare,
   RefreshCw as RefreshCwIcon,
@@ -18,7 +18,46 @@ import {
   Star,
 } from '../icons';
 
-export type SidebarTab = 'files' | 'commits' | 'activity';
+export type SidebarTab = 'files' | 'activity';
+
+// Scopes the activity feed. Lives at the top of the activity panel as a
+// 4-segment toggle so a reviewer can collapse to "just commits" or "just
+// comments" without losing the unified timeline. Persisted in FileSidebar
+// (not ActivityPanel) so it survives tab switches — switching to Files and
+// back doesn't reset the filter.
+type ActivityFilter = 'all' | 'comments' | 'commits' | 'reviews';
+
+// `reviews` collects the lifecycle + decision events (open / close / merge /
+// approve / revoke / source-updated-fallback). The split is the user's
+// mental model: "what changed" (commits), "what was said" (comments), "what
+// was decided" (everything else).
+function inFilter(e: ActivityEvent, filter: ActivityFilter): boolean {
+  switch (filter) {
+    case 'all':
+      return true;
+    case 'comments':
+      return e.type === 'comment';
+    case 'commits':
+      return e.type === 'commit';
+    case 'reviews':
+      return (
+        e.type === 'created' ||
+        e.type === 'statusChanged' ||
+        e.type === 'sourceUpdated' ||
+        e.type === 'approvalStateChanged' ||
+        e.type === 'merged'
+      );
+  }
+}
+
+function filterCount(
+  activity: ActivityEvent[],
+  filter: ActivityFilter,
+): number {
+  let n = 0;
+  for (const e of activity) if (inFilter(e, filter)) n++;
+  return n;
+}
 
 // Tree vs flat-list mode for the files panel, persisted across sessions so a
 // user who prefers one layout keeps it. Mirrors VS Code's "Source Control"
@@ -51,16 +90,19 @@ interface Props {
   // Disable reviewed checkboxes when the file list is the per-commit view —
   // reviewed state is anchored to the PR's afterCommit, not arbitrary commits.
   filesReadOnly?: boolean;
-  // Commits panel
-  commits: PullRequestCommit[];
-  selectedCommitId?: string;
-  onSelectCommit: (commit: PullRequestCommit) => void;
   // Activity panel. Optional — the create-PR flow reuses this sidebar in a
   // files-only mode where there's no PR (and so no activity) yet.
   activity?: ActivityEvent[];
   activityLoading?: boolean;
-  // Clicking a line-anchored comment in the timeline scrolls the diff to it.
+  // Clicking a row in the Activity timeline dispatches on event type: a
+  // line-anchored comment scrolls the diff to the thread, a commit jumps
+  // to the per-commit diff. General comments and lifecycle events are
+  // inert (no scrollable target).
   onActivitySelect?: (event: ActivityEvent) => void;
+  // The commit currently being viewed in the per-commit diff (if any). Used
+  // to give the matching activity row a quiet "selected" hint so a user
+  // reviewing a single commit can see where it sits in the timeline.
+  selectedCommitId?: string;
 }
 
 export function FileSidebar({
@@ -75,12 +117,10 @@ export function FileSidebar({
   onSelect,
   onToggleReviewed,
   filesReadOnly,
-  commits,
-  selectedCommitId,
-  onSelectCommit,
   activity = [],
   activityLoading,
   onActivitySelect,
+  selectedCommitId,
 }: Props): JSX.Element {
   const isCollapsed = sidebarOpen === false;
   const sidebarClassName = `file-sidebar${isCollapsed ? ' is-collapsed' : ''}`;
@@ -90,6 +130,11 @@ export function FileSidebar({
   // which is exactly why the diff didn't reclaim the width when hidden.
   const sidebarStyle =
     !isCollapsed && sidebarWidth != null ? { width: sidebarWidth } : undefined;
+
+  // Activity filter persists in the sidebar (not the panel) so it survives
+  // tab switches. Default to 'all' on first mount; the user picks from there.
+  const [activityFilter, setActivityFilter] =
+    useState<ActivityFilter>('all');
 
   return (
     <div className={sidebarClassName} style={sidebarStyle}>
@@ -102,17 +147,6 @@ export function FileSidebar({
           onClick={() => onChangeTab('files')}
         >
           Files <span className="sidebar-tab-count">{files.length}</span>
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === 'commits'}
-          className={`sidebar-tab${tab === 'commits' ? ' is-active' : ''}`}
-          onClick={() => onChangeTab('commits')}
-          disabled={commits.length === 0}
-          title={commits.length === 0 ? 'No commits to show' : undefined}
-        >
-          Commits <span className="sidebar-tab-count">{commits.length}</span>
         </button>
         <button
           type="button"
@@ -137,17 +171,14 @@ export function FileSidebar({
           onToggleReviewed={onToggleReviewed}
           readOnly={filesReadOnly}
         />
-      ) : tab === 'commits' ? (
-        <CommitsPanel
-          commits={commits}
-          selectedCommitId={selectedCommitId}
-          onSelectCommit={onSelectCommit}
-        />
       ) : (
         <ActivityPanel
           activity={activity}
           loading={activityLoading}
           onNavigate={onActivitySelect}
+          filter={activityFilter}
+          onChangeFilter={setActivityFilter}
+          selectedCommitId={selectedCommitId}
         />
       )}
     </div>
@@ -515,148 +546,135 @@ function FileRow({
   );
 }
 
-function CommitsPanel({
-  commits,
-  selectedCommitId,
-  onSelectCommit,
-}: {
-  commits: PullRequestCommit[];
-  selectedCommitId?: string;
-  onSelectCommit: (c: PullRequestCommit) => void;
-}): JSX.Element {
-  return (
-    <ul className="commits-sidebar-list">
-      {commits.length === 0 ? (
-        <li className="empty-li">No commits in this PR.</li>
-      ) : (
-        commits.map((c) => (
-          <CommitRow
-            key={c.id}
-            commit={c}
-            selected={c.id === selectedCommitId}
-            onSelect={() => onSelectCommit(c)}
-          />
-        ))
-      )}
-    </ul>
-  );
-}
-
-function CommitRow({
-  commit,
-  selected,
-  onSelect,
-}: {
-  commit: PullRequestCommit;
-  selected: boolean;
-  onSelect: () => void;
-}): JSX.Element {
-  const [copied, setCopied] = useState(false);
-  const subject = subjectOf(commit.message);
-  const who = commit.authorName ?? commit.committerName ?? '';
-  const when = commit.committerDate ?? commit.authorDate;
-
-  return (
-    <li
-      className={`commit-item${selected ? ' active' : ''}`}
-      onClick={onSelect}
-      title={commit.message || commit.id}
-    >
-      <button
-        type="button"
-        className={`commit-sha-chip${copied ? ' is-copied' : ''}`}
-        title={copied ? 'Copied' : `Copy ${commit.id}`}
-        onClick={(e) => {
-          e.stopPropagation();
-          void navigator.clipboard
-            .writeText(commit.id)
-            .then(() => {
-              setCopied(true);
-              setTimeout(() => setCopied(false), 1100);
-            })
-            .catch(() => {
-              // Clipboard can fail in restricted contexts; silently no-op.
-            });
-        }}
-      >
-        {copied ? 'copied' : commit.id.slice(0, 7)}
-      </button>
-      <span className="commit-item-main">
-        <span className="commit-item-subject">
-          {subject || '(empty message)'}
-        </span>
-        <span className="commit-item-meta">
-          {who && <span className="commit-item-author">{who}</span>}
-          {when && (
-            <>
-              {who && <span className="commit-item-sep">·</span>}
-              <span className="commit-item-when" title={when}>
-                {fmtRel(when)}
-              </span>
-            </>
-          )}
-        </span>
-      </span>
-    </li>
-  );
-}
-
 // ---- Activity panel --------------------------------------------------
 
 function ActivityPanel({
   activity,
   loading,
   onNavigate,
+  filter,
+  onChangeFilter,
+  selectedCommitId,
 }: {
   activity: ActivityEvent[];
   loading?: boolean;
   onNavigate?: (event: ActivityEvent) => void;
+  filter: ActivityFilter;
+  onChangeFilter: (next: ActivityFilter) => void;
+  selectedCommitId?: string;
 }): JSX.Element {
-  if (activity.length === 0) {
-    return (
-      <ul>
-        <li className="empty-li">
-          {loading ? 'Loading activity…' : 'No activity yet.'}
-        </li>
-      </ul>
-    );
-  }
+  const filtered = useMemo(
+    () => activity.filter((e) => inFilter(e, filter)),
+    [activity, filter],
+  );
+  // Per-filter counts drive the toggle's badges. Recomputed on every
+  // activity change so the numbers stay in sync as the feed fills in.
+  const counts = useMemo(
+    () => ({
+      all: activity.length,
+      comments: filterCount(activity, 'comments'),
+      commits: filterCount(activity, 'commits'),
+      reviews: filterCount(activity, 'reviews'),
+    }),
+    [activity],
+  );
+
+  // Empty state text depends on the active filter so "filter to Commits on
+  // a PR with no commits" doesn't lie with "No activity yet."
+  const emptyText = (() => {
+    if (loading && activity.length === 0) return 'Loading activity…';
+    if (filter === 'comments') return 'No comments yet.';
+    if (filter === 'commits') return 'No commits yet.';
+    if (filter === 'reviews') return 'No reviews yet.';
+    return 'No activity yet.';
+  })();
+
   return (
-    <ul className="activity-list">
-      {activity.map((e) => (
-        <ActivityRow key={e.id} event={e} onNavigate={onNavigate} />
-      ))}
-    </ul>
+    <div className="activity-panel">
+      <div className="activity-filter" role="group" aria-label="Filter activity">
+        {(
+          [
+            ['all', 'All'],
+            ['comments', 'Comments'],
+            ['commits', 'Commits'],
+            ['reviews', 'Reviews'],
+          ] as const
+        ).map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            className={`activity-filter-btn${filter === key ? ' is-active' : ''}`}
+            aria-pressed={filter === key}
+            onClick={() => onChangeFilter(key)}
+          >
+            {label}
+            <span className="activity-filter-count">{counts[key]}</span>
+          </button>
+        ))}
+      </div>
+      {filtered.length === 0 ? (
+        <ul>
+          <li className="empty-li">{emptyText}</li>
+        </ul>
+      ) : (
+        <ul className="activity-list">
+          {filtered.map((e) => (
+            <ActivityRow
+              key={e.id}
+              event={e}
+              onNavigate={onNavigate}
+              isSelected={
+                e.type === 'commit' && e.commitId === selectedCommitId
+              }
+            />
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 
 function ActivityRow({
   event,
   onNavigate,
+  isSelected = false,
 }: {
   event: ActivityEvent;
   onNavigate?: (event: ActivityEvent) => void;
+  isSelected?: boolean;
 }): JSX.Element {
-  const who = shortArn(event.actorArn);
-  // Only a line-anchored comment can jump to a thread in the diff. General PR
-  // comments (no filePath) and lifecycle events have no location, so they stay
-  // inert. threadId is what the diff uses to find the rendered row.
+  // Prefer the human `actorName` (set by the provider for events like
+  // commits, where there's no AWS identity); fall back to the ARN tail.
+  const who = event.actorName ?? shortArn(event.actorArn);
+  // A row is navigable when it can jump to something concrete in the
+  // renderer: a line-anchored comment thread in the diff, or a commit in
+  // the PR's commit list. Other rows (general comments, lifecycle events)
+  // stay inert — they have no scrollable target.
   const navigable =
     !!onNavigate &&
-    event.type === 'comment' &&
-    !!event.filePath &&
-    !!event.threadId;
+    ((event.type === 'comment' && !!event.filePath && !!event.threadId) ||
+      (event.type === 'commit' && !!event.commitId));
   const onActivate = navigable ? () => onNavigate!(event) : undefined;
+  // Tooltip varies by navigable type: comments land on a file, commits on
+  // a per-commit diff. The full commit message is the natural hover text
+  // for a commit row, so the user can read more than the truncated first
+  // line without clicking.
+  const navTitle =
+    event.type === 'comment' && event.filePath
+      ? `Go to comment on ${baseName(event.filePath)}`
+      : event.type === 'commit' && event.commitId
+        ? `View commit ${event.commitId.slice(0, 7)}`
+        : undefined;
   return (
     <li
       className={`activity-item activity-${event.type}${
         event.isReply ? ' is-reply' : ''
-      }${navigable ? ' is-navigable' : ''}`}
+      }${navigable ? ' is-navigable' : ''}${
+        isSelected ? ' is-selected' : ''
+      }`}
       role={navigable ? 'button' : undefined}
       tabIndex={navigable ? 0 : undefined}
-      title={
-        navigable ? `Go to comment on ${baseName(event.filePath!)}` : undefined
-      }
+      title={navTitle}
       onClick={onActivate}
       onKeyDown={
         navigable
@@ -696,6 +714,17 @@ function ActivityRow({
             )}
           </>
         )}
+        {event.type === 'commit' && event.commitMessage && (
+          <span
+            className="activity-excerpt"
+            title={event.commitMessage || event.commitId}
+          >
+            {subjectOf(event.commitMessage) || '(empty message)'}
+            {event.commitId && (
+              <CopyShaButton sha={event.commitId} />
+            )}
+          </span>
+        )}
         {event.occurredAt && (
           <span className="activity-when" title={event.occurredAt}>
             {fmtRel(event.occurredAt)}
@@ -703,6 +732,38 @@ function ActivityRow({
         )}
       </span>
     </li>
+  );
+}
+
+// Copy-to-clipboard SHA chip. Used by activity commit rows in place of the
+// old CommitRow's chip — same affordance (click-to-copy with ~1s feedback),
+// same styling (commit-sha-chip), with stopPropagation so the row's
+// click-to-jump doesn't also fire. A single button inside a role=button
+// row is a known a11y trade-off but matches GitHub's PR-conversation
+// pattern; tab order is row → chip → next row, and Enter on either
+// triggers its own action.
+function CopyShaButton({ sha }: { sha: string }): JSX.Element {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      className={`commit-sha-chip${copied ? ' is-copied' : ''}`}
+      title={copied ? 'Copied' : `Copy ${sha}`}
+      onClick={(e) => {
+        e.stopPropagation();
+        void navigator.clipboard
+          .writeText(sha)
+          .then(() => {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1100);
+          })
+          .catch(() => {
+            // Clipboard can fail in restricted contexts; silently no-op.
+          });
+      }}
+    >
+      {copied ? 'copied' : sha.slice(0, 7)}
+    </button>
   );
 }
 
@@ -724,6 +785,8 @@ function activityVerb(e: ActivityEvent): string {
       return e.mergedWith
         ? `merged this pull request (${mergeLabel(e.mergedWith)})`
         : 'merged this pull request';
+    case 'commit':
+      return 'committed';
     case 'comment':
       if (e.isReply) {
         return e.replyToAuthorArn
@@ -746,6 +809,8 @@ function activityIcon(e: ActivityEvent): JSX.Element {
       return <Check size={13} />;
     case 'merged':
       return <GitMerge size={13} />;
+    case 'commit':
+      return <GitCommit size={13} />;
     case 'comment':
       return e.isReply ? <ReplyIcon size={13} /> : <MessageSquare size={13} />;
   }

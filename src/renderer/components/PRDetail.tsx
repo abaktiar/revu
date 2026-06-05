@@ -555,10 +555,6 @@ export function PRDetail({ repositoryName, pullRequest, onBack }: Props): JSX.El
     });
   }, []);
 
-  const onSidebarSelectCommit = useCallback((commit: PullRequestCommit): void => {
-    setSelectedCommit(commit);
-  }, []);
-
   const onChangeSidebarTab = useCallback((next: SidebarTab): void => {
     setSidebarTab(next);
   }, []);
@@ -567,19 +563,35 @@ export function PRDetail({ repositoryName, pullRequest, onBack }: Props): JSX.El
     setSelectedCommit(null);
   }, []);
 
-  // Clicking a line-anchored comment in the Activity timeline scrolls the diff
-  // to that thread. Comment threads only render in the PR diff (the per-commit
-  // view is read-only and shows none), so drop back to it first; the diff keeps
-  // the pending reveal and acts on it once the PR sections render.
-  const onActivitySelect = useCallback((event: ActivityEvent): void => {
-    if (!event.filePath || !event.threadId) return;
-    setSelectedCommit(null);
-    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    diffRef.current?.scrollToComment(event.threadId, event.filePath, {
-      behavior: reduced ? 'auto' : 'smooth',
-      block: 'start',
-    });
-  }, []);
+  // Clicking a row in the Activity timeline dispatches on event type:
+  //   - line-anchored comment → scroll the diff to the thread
+  //   - commit → jump to the per-commit diff for that SHA
+  // Comment threads only render in the PR diff (the per-commit view is
+  // read-only and shows none), so a comment click drops back to it first;
+  // the diff keeps the pending reveal and acts on it once the PR sections
+  // render. A commit click does the opposite — it sets `selectedCommit`
+  // which switches to the per-commit diff (no scroll needed; the diff
+  // loads fresh against that commit pair).
+  const onActivitySelect = useCallback(
+    (event: ActivityEvent): void => {
+      if (event.type === 'commit') {
+        if (!event.commitId) return;
+        const commit = commits.find((c) => c.id === event.commitId);
+        if (commit) setSelectedCommit(commit);
+        return;
+      }
+      if (!event.filePath || !event.threadId) return;
+      setSelectedCommit(null);
+      const reduced = window.matchMedia(
+        '(prefers-reduced-motion: reduce)',
+      ).matches;
+      diffRef.current?.scrollToComment(event.threadId, event.filePath, {
+        behavior: reduced ? 'auto' : 'smooth',
+        block: 'start',
+      });
+    },
+    [commits],
+  );
 
   const applyApproval = useCallback(
     async (action: ApprovalAction): Promise<void> => {
@@ -793,9 +805,7 @@ export function PRDetail({ repositoryName, pullRequest, onBack }: Props): JSX.El
           onSelect={onSidebarSelect}
           onToggleReviewed={toggleReviewedSync}
           filesReadOnly={viewMode === 'commit'}
-          commits={commits}
           selectedCommitId={selectedCommit?.id}
-          onSelectCommit={onSidebarSelectCommit}
           activity={activity}
           activityLoading={activityLoading}
           onActivitySelect={onActivitySelect}

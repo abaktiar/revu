@@ -227,6 +227,19 @@ export function GitBranch(props: IconProps): JSX.Element {
   );
 }
 
+// Lucide's `git-commit`: a centered circle with a horizontal line passing
+// through it, terminating at the icon's left/right edges. Used by the
+// Activity timeline for per-commit rows.
+export function GitCommit(props: IconProps): JSX.Element {
+  return (
+    <svg {...base(props)}>
+      <circle cx="8" cy="8" r="2.5" />
+      <line x1="1" y1="8" x2="5.5" y2="8" />
+      <line x1="10.5" y1="8" x2="15" y2="8" />
+    </svg>
+  );
+}
+
 export function MoreHorizontal(props: IconProps): JSX.Element {
   return (
     <svg {...base(props)}>
