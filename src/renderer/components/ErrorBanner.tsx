@@ -1,6 +1,16 @@
 import type { ReactNode } from 'react';
 import type { IpcErrorCode } from '@shared/types';
 import { IpcError } from '../api';
+import {
+  AlertCircle,
+  Clock,
+  Key,
+  XCircle,
+  Search,
+  AlertTriangle,
+  Wifi,
+  X,
+} from '../icons';
 
 // Shared error UI for IPC failures. Renders the classified message + hint
 // from a ProviderError (via IpcError) so the user always sees an actionable
@@ -23,12 +33,16 @@ export function ErrorBanner({
   extra?: ReactNode;
 }): JSX.Element {
   const info = classify(error);
-  const showSettings = info.code === 'credentials_expired' || info.code === 'credentials_missing';
+  const showSettings =
+    info.code === 'credentials_expired' || info.code === 'credentials_missing';
+  const Icon = iconFor(info.code);
   return (
     <div className={`error error-${info.code}`} role="alert">
-      <div className="error-title">
-        <span className="error-icon">{iconFor(info.code)}</span>
-        <span>{title}</span>
+      <div className="error-head">
+        <span className="error-icon" aria-hidden>
+          <Icon size={16} />
+        </span>
+        <span className="error-title">{title}</span>
       </div>
       <div className="error-message">{info.message}</div>
       {info.hint && <div className="error-hint">{info.hint}</div>}
@@ -40,7 +54,7 @@ export function ErrorBanner({
               onClick={onRetry}
               disabled={retrying}
             >
-              {retrying ? 'Retrying…' : (retryLabel ?? 'Try again')}
+              {retrying ? 'Retrying…' : retryLabel ?? 'Try again'}
             </button>
           )}
           {showSettings && onOpenSettings && (
@@ -67,23 +81,23 @@ function classify(err: unknown): {
   return { code: 'unknown', message: String(err) };
 }
 
-function iconFor(code: IpcErrorCode): string {
+function iconFor(code: IpcErrorCode): typeof AlertCircle {
   switch (code) {
     case 'throttled':
-      return '⏳';
+      return Clock;
     case 'credentials_expired':
     case 'credentials_missing':
-      return '🔑';
+      return Key;
     case 'access_denied':
-      return '🚫';
+      return XCircle;
     case 'not_found':
-      return '🔍';
+      return Search;
     case 'conflict':
-      return '⚠';
+      return AlertTriangle;
     case 'network':
     case 'timeout':
-      return '📡';
+      return Wifi;
     default:
-      return '✕';
+      return X;
   }
 }

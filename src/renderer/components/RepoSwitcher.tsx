@@ -7,6 +7,13 @@ import {
 } from 'react';
 import type { RepositorySummary } from '@shared/types';
 import { api, unwrap } from '../api';
+import {
+  ChevronDown,
+  RefreshCw,
+  Search,
+  Star,
+  Check,
+} from '../icons';
 
 // Quick repository switcher for the list-view topbar. Lets the user change the
 // active CodeCommit repo without opening Settings. Mirrors BranchPicker: a
@@ -203,12 +210,16 @@ export function RepoSwitcher({
             onToggleFavorite(name, !favorited);
           }}
         >
-          {favorited ? '★' : '☆'}
+          <Star size={14} />
         </button>
         <span className="repo-row-name" title={name}>
           {name}
         </span>
-        {isCurrent && <span className="repo-row-current">current</span>}
+        {isCurrent && (
+          <span className="repo-row-current" aria-label="current repository">
+            <Check size={12} />
+          </span>
+        )}
       </div>
     );
   };
@@ -228,7 +239,7 @@ export function RepoSwitcher({
       >
         <span className="repo-switcher-value">{current ?? 'Select repository'}</span>
         <span className="repo-switcher-caret" aria-hidden="true">
-          ▾
+          <ChevronDown size={12} />
         </span>
       </button>
       {open && (
@@ -239,6 +250,7 @@ export function RepoSwitcher({
           aria-label="Repositories"
         >
           <div className="repo-switcher-search-row">
+            <Search size={14} className="search-icon" aria-hidden />
             <input
               ref={searchRef}
               type="search"
@@ -260,7 +272,7 @@ export function RepoSwitcher({
               title="Re-fetch the repository list from the server"
               aria-label="Refresh repository list"
             >
-              ↻
+              <RefreshCw size={14} />
             </button>
           </div>
           <div

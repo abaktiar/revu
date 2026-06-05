@@ -24,9 +24,26 @@
   flex-direction: column;
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 10px;
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
+  border-radius: var(--r-4);
+  /* A heavier shadow is allowed on dialogs because they are the most
+   * elevated surface in the app — they float above the entire workspace.
+   * It only appears on dark and is the single exception to the brand rule
+   * that shadows don't belong on dark surfaces. */
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
   outline: none;
+  animation: dialog-in 180ms var(--ease) both;
+  transform-origin: top center;
+}
+
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 .pr-dialog-head {
@@ -185,9 +202,13 @@
   flex-direction: column;
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 10px;
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
+  border-radius: var(--r-4);
+  /* Same elevation exception as the dialog: the finder floats above the
+   * diff and needs to read as detached. */
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
   overflow: hidden;
+  animation: dialog-in 160ms var(--ease) both;
+  transform-origin: top center;
 }
 
 .finder-input {
@@ -316,6 +337,11 @@
   border-bottom: 1px solid var(--border);
 }
 
+.repo-switcher-search-row .search-icon {
+  color: var(--text-dim);
+  flex: 0 0 auto;
+}
+
 .repo-switcher-search-row input[type='search'] {
   flex: 1 1 auto;
   min-width: 0;
@@ -404,8 +430,14 @@
 
 .repo-row-current {
   flex: 0 0 auto;
-  font-size: 11px;
-  color: var(--text-dim);
+  color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--r-1);
+  background: var(--accent-wash);
 }
 
 .repo-row-star {

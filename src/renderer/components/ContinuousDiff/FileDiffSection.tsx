@@ -18,6 +18,12 @@ import type {
 import { loadFileDiff } from '../../syntheticDiff';
 import { fileDiffSemaphore } from '../../concurrency';
 import {
+  ArrowRight,
+  ChevronDown,
+  ChevronRight,
+  Triangle,
+} from '../../icons';
+import {
   buildDraftIndex,
   buildThreadIndex,
   type ComposerLocation,
@@ -323,15 +329,23 @@ function FileDiffSectionImpl({
             setAutoCollapsed(false);
           }}
           title={collapsed ? 'Expand file' : 'Collapse file'}
+          aria-label={collapsed ? 'Expand file' : 'Collapse file'}
         >
-          {collapsed ? '▶' : '▼'}
+          {collapsed ? (
+            <Triangle size={10} className="file-collapse-icon" />
+          ) : (
+            <ChevronDown size={12} className="file-collapse-icon" />
+          )}
         </button>
         <span className={`ct ct-${entry.changeType}`}>{entry.changeType}</span>
         <span className="path">{entry.path}</span>
         {entry.beforePath &&
           entry.afterPath &&
           entry.beforePath !== entry.afterPath && (
-            <span className="hint">← {entry.beforePath}</span>
+            <span className="hint">
+              <ArrowRight size={11} />
+              {entry.beforePath}
+            </span>
           )}
         {diffStats && (
           <span
@@ -344,7 +358,10 @@ function FileDiffSectionImpl({
           </span>
         )}
         {autoCollapsed && collapsed && totalLines > 0 && (
-          <span className="hint" title="Large diff. Collapsed by default; click ▶ to render.">
+          <span
+            className="hint"
+            title="Large diff. Collapsed by default; click to render."
+          >
             large diff ({totalLines.toLocaleString()} lines)
           </span>
         )}

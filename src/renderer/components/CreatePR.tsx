@@ -22,6 +22,7 @@ import {
   type ContinuousDiffHandle,
 } from './ContinuousDiff/ContinuousDiff';
 import type { DiffCallbacks, DiffContext } from './ContinuousDiff/types';
+import { ArrowLeft, ArrowRight } from '../icons';
 import { ErrorBanner } from './ErrorBanner';
 
 interface Props {
@@ -332,7 +333,8 @@ export function CreatePR({
     <div className="pr-detail create-pr">
       <div className="pr-toolbar">
         <button type="button" onClick={onCancel}>
-          ← Cancel
+          <ArrowLeft size={12} />
+          Cancel
         </button>
         <span className="pr-title">New pull request</span>
         <span className="grow" />
@@ -378,7 +380,7 @@ export function CreatePR({
           </label>
 
           <span className="create-pr-arrow" aria-hidden="true">
-            →
+            <ArrowRight size={14} />
           </span>
 
           <label className="create-pr-label">

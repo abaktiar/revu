@@ -34,6 +34,22 @@ import { ErrorBanner } from './ErrorBanner';
 import { MergeDialog, EditPRDialog } from './PRDialogs';
 import { FileFinder } from './FileFinder';
 import type { SidebarTab } from './FileSidebar';
+import {
+  ArrowLeft,
+  Check,
+  CheckCircle,
+  Edit3,
+  ExternalLink,
+  Eye,
+  EyeOff,
+  GitMerge,
+  MessageSquare,
+  MoreHorizontal,
+  PanelLeft,
+  RefreshCw,
+  X,
+  XCircle,
+} from '../icons';
 
 // Stable empty refs used when switching to commit view so memoized children
 // don't see fresh `[]` / `new Set()` references on every render.
@@ -48,11 +64,7 @@ interface Props {
   onBack: () => void;
 }
 
-export function PRDetail({
-  repositoryName,
-  pullRequest,
-  onBack,
-}: Props): JSX.Element {
+export function PRDetail({ repositoryName, pullRequest, onBack }: Props): JSX.Element {
   const [detail, setDetail] = useState<PullRequestDetail | null>(null);
   const [differences, setDifferences] = useState<PRDifferences | null>(null);
   const [activeFile, setActiveFile] = useState<string | null>(null);
@@ -61,8 +73,7 @@ export function PRDetail({
   const [reviewed, setReviewed] = useState<ReviewedFile[]>([]);
   const [approval, setApproval] = useState<PullRequestApprovalView | null>(null);
   const [approvalBusy, setApprovalBusy] = useState(false);
-  const [mergeability, setMergeability] =
-    useState<PullRequestMergeability | null>(null);
+  const [mergeability, setMergeability] = useState<PullRequestMergeability | null>(null);
   const [commits, setCommits] = useState<PullRequestCommit[]>([]);
   const [activity, setActivity] = useState<ActivityEvent[]>([]);
   const [activityLoading, setActivityLoading] = useState(true);
@@ -75,9 +86,7 @@ export function PRDetail({
   const [refreshToken, setRefreshToken] = useState(0);
   // PR-mutation UI state: which action (if any) is in flight, and whether the
   // merge / edit dialogs are open.
-  const [actionBusy, setActionBusy] = useState<
-    null | 'merge' | 'status' | 'edit'
-  >(null);
+  const [actionBusy, setActionBusy] = useState<null | 'merge' | 'status' | 'edit'>(null);
   // Errors from PR mutations (merge/close/reopen/edit). Kept separate from
   // `loadError` on purpose: a failed action must NOT replace the whole page
   // with the load-failure view (which would also unmount the open dialog).
@@ -91,13 +100,52 @@ export function PRDetail({
   // selected commit is the one currently being viewed; commitDiff is the
   // PRDifferences-shaped payload for the per-commit diff and is loaded
   // lazily on selection (cached forever, keyed by commit pair).
-  const [selectedCommit, setSelectedCommit] =
-    useState<PullRequestCommit | null>(null);
+  const [selectedCommit, setSelectedCommit] = useState<PullRequestCommit | null>(null);
   const [commitDiff, setCommitDiff] = useState<PRDifferences | null>(null);
   const [commitDiffLoading, setCommitDiffLoading] = useState(false);
   const [commitDiffError, setCommitDiffError] = useState<unknown>(null);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('files');
+  // Sidebar visibility is per-session only (not persisted) — it always opens
+  // showing the file list, and the toggle lives in the diff topbar.
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const toggleSidebar = useCallback(() => setSidebarOpen((v) => !v), []);
+  const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('revu:sidebarWidth');
+      if (saved != null) return parseInt(saved, 10);
+    } catch {
+      /* ignore */
+    }
+    return 320;
+  });
+  const sidebarWidthRef = useRef(sidebarWidth);
+  sidebarWidthRef.current = sidebarWidth;
   const diffRef = useRef<ContinuousDiffHandle | null>(null);
+
+  const onResizeMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = sidebarWidthRef.current;
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const next = Math.max(180, Math.min(startWidth + (moveEvent.clientX - startX), window.innerWidth * 0.5));
+      setSidebarWidth(next);
+    };
+
+    const onMouseUp = () => {
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      const handle = document.querySelector('.sidebar-resize-handle');
+      if (handle) handle.classList.remove('is-dragging');
+      localStorage.setItem('revu:sidebarWidth', String(sidebarWidthRef.current));
+    };
+
+    const handle = document.querySelector('.sidebar-resize-handle');
+    if (handle) handle.classList.add('is-dragging');
+
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+  }, []);
 
   // ---- Load PR data ---------------------------------------------------
   // `refreshToken` bumps when the user hits the Refresh button; the
@@ -129,9 +177,7 @@ export function PRDetail({
         if (!cancelled) setLoadError(err);
       });
 
-    const diffReq = unwrap(
-      api.prs.differences(repositoryName, pullRequest.id, opts),
-    );
+    const diffReq = unwrap(api.prs.differences(repositoryName, pullRequest.id, opts));
     diffReq
       .then((diff) => {
         if (!cancelled) setDifferences(diff);
@@ -246,23 +292,16 @@ export function PRDetail({
     }
     // Walk to the first parent. For a root commit on the PR branch (no
     // parent), fall back to the PR's merge base — the closest "before" we have.
-    const parent =
-      selectedCommit.parents[0] ?? differences?.beforeCommitId ?? null;
+    const parent = selectedCommit.parents[0] ?? differences?.beforeCommitId ?? null;
     if (!parent) {
-      setCommitDiffError(
-        new Error(
-          'This commit has no parent and the PR has no merge base to fall back to.',
-        ),
-      );
+      setCommitDiffError(new Error('This commit has no parent and the PR has no merge base to fall back to.'));
       return;
     }
     let cancelled = false;
     setCommitDiffLoading(true);
     setCommitDiffError(null);
     setActiveFile(null);
-    unwrap(
-      api.prs.commitDifferences(repositoryName, parent, selectedCommit.id),
-    )
+    unwrap(api.prs.commitDifferences(repositoryName, parent, selectedCommit.id))
       .then((d) => {
         if (cancelled) return;
         setCommitDiff(d);
@@ -323,24 +362,15 @@ export function PRDetail({
   const reviewedPaths = useMemo(() => {
     if (!differences) return new Set<string>();
     const current = differences.afterCommitId;
-    return new Set(
-      reviewed
-        .filter((r) => r.reviewedAtAfterCommit === current)
-        .map((r) => r.filePath),
-    );
+    return new Set(reviewed.filter((r) => r.reviewedAtAfterCommit === current).map((r) => r.filePath));
   }, [reviewed, differences]);
 
-  const generalComments = useMemo(
-    () => threads.filter((t) => !t.filePath),
-    [threads],
-  );
+  const generalComments = useMemo(() => threads.filter((t) => !t.filePath), [threads]);
 
   // ---- Mutation handlers ---------------------------------------------
   const refreshThreads = useCallback(async (): Promise<void> => {
     try {
-      const fresh = await unwrap(
-        api.comments.list(repositoryName, pullRequest.id),
-      );
+      const fresh = await unwrap(api.comments.list(repositoryName, pullRequest.id));
       setThreads(fresh);
       // Comments are part of the activity feed, so keep the timeline in sync
       // after a post/reply/delete. Best-effort: a failure here just leaves a
@@ -425,9 +455,7 @@ export function PRDetail({
       setThreads((cur) =>
         cur.map((t) => ({
           ...t,
-          comments: t.comments.map((c) =>
-            c.id === commentId ? { ...c, deleted: true, content: '' } : c,
-          ),
+          comments: t.comments.map((c) => (c.id === commentId ? { ...c, deleted: true, content: '' } : c)),
         })),
       );
       try {
@@ -452,14 +480,7 @@ export function PRDetail({
     async (file: FileDiffEntry, next: boolean): Promise<void> => {
       if (!differences) return;
       try {
-        const entry = await unwrap(
-          api.reviewed.toggle(
-            pullRequest.id,
-            file.path,
-            differences.afterCommitId,
-            next,
-          ),
-        );
+        const entry = await unwrap(api.reviewed.toggle(pullRequest.id, file.path, differences.afterCommitId, next));
         setReviewed((cur) => {
           const filtered = cur.filter((r) => r.filePath !== file.path);
           return entry ? [...filtered, entry] : filtered;
@@ -489,8 +510,7 @@ export function PRDetail({
   // pair, so posting from the per-commit diff would land on the wrong
   // beforeCommitId / afterCommitId.
   const viewMode: 'pr' | 'commit' = selectedCommit ? 'commit' : 'pr';
-  const currentDiff =
-    viewMode === 'commit' ? commitDiff : differences;
+  const currentDiff = viewMode === 'commit' ? commitDiff : differences;
 
   // ---- Stable props for ContinuousDiff -------------------------------
   // These objects used to be built inline in the JSX, so every PRDetail render
@@ -509,14 +529,7 @@ export function PRDetail({
       selfArn: approval?.selfArn,
       readOnly: viewMode === 'commit',
     };
-  }, [
-    currentDiff,
-    pullRequest.id,
-    repositoryName,
-    postingThreadId,
-    approval?.selfArn,
-    viewMode,
-  ]);
+  }, [currentDiff, pullRequest.id, repositoryName, postingThreadId, approval?.selfArn, viewMode]);
 
   const callbacks: DiffCallbacks = useMemo(
     () => ({
@@ -527,14 +540,7 @@ export function PRDetail({
       onDeleteComment: deleteComment,
       onToggleReviewed: toggleReviewedSync,
     }),
-    [
-      postComment,
-      postReply,
-      saveDraft,
-      deleteDraft,
-      deleteComment,
-      toggleReviewedSync,
-    ],
+    [postComment, postReply, saveDraft, deleteDraft, deleteComment, toggleReviewedSync],
   );
 
   const onActiveFileChange = useCallback((path: string | null): void => {
@@ -549,12 +555,9 @@ export function PRDetail({
     });
   }, []);
 
-  const onSidebarSelectCommit = useCallback(
-    (commit: PullRequestCommit): void => {
-      setSelectedCommit(commit);
-    },
-    [],
-  );
+  const onSidebarSelectCommit = useCallback((commit: PullRequestCommit): void => {
+    setSelectedCommit(commit);
+  }, []);
 
   const onChangeSidebarTab = useCallback((next: SidebarTab): void => {
     setSidebarTab(next);
@@ -571,9 +574,7 @@ export function PRDetail({
   const onActivitySelect = useCallback((event: ActivityEvent): void => {
     if (!event.filePath || !event.threadId) return;
     setSelectedCommit(null);
-    const reduced = window.matchMedia(
-      '(prefers-reduced-motion: reduce)',
-    ).matches;
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     diffRef.current?.scrollToComment(event.threadId, event.filePath, {
       behavior: reduced ? 'auto' : 'smooth',
       block: 'start',
@@ -584,9 +585,7 @@ export function PRDetail({
     async (action: ApprovalAction): Promise<void> => {
       setApprovalBusy(true);
       try {
-        const next = await unwrap(
-          api.approval.update(repositoryName, pullRequest.id, action),
-        );
+        const next = await unwrap(api.approval.update(repositoryName, pullRequest.id, action));
         setApproval(next);
         const fresh = await unwrap(api.prs.get(repositoryName, pullRequest.id));
         setDetail(fresh);
@@ -648,9 +647,7 @@ export function PRDetail({
       setActionBusy('status');
       setActionError(null);
       try {
-        const updated = await unwrap(
-          api.prs.setStatus(repositoryName, pullRequest.id, status),
-        );
+        const updated = await unwrap(api.prs.setStatus(repositoryName, pullRequest.id, status));
         setDetail(updated);
         await reloadMergeability();
       } catch (err) {
@@ -694,12 +691,7 @@ export function PRDetail({
       // comment, title, or filter.
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
-      if (
-        (e.metaKey || e.ctrlKey) &&
-        !e.shiftKey &&
-        !e.altKey &&
-        (e.key === 'p' || e.key === 'P')
-      ) {
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && (e.key === 'p' || e.key === 'P')) {
         // Cmd/Ctrl+P → fuzzy file finder. Intercept before the browser's print.
         e.preventDefault();
         setFinderOpen(true);
@@ -738,17 +730,21 @@ export function PRDetail({
     onEdit: () => setEditOpen(true),
     onClose: () => void doSetStatus('CLOSED'),
     onReopen: () => void doSetStatus('OPEN'),
+    onOpenInAws: () => {
+      if (webUrl) window.open(webUrl, '_blank', 'noopener,noreferrer');
+    },
+    hasWebUrl: !!webUrl,
   };
 
   if (loadError) {
     return (
-      <div className="pr-detail">
+      <div className='pr-detail'>
         <Toolbar {...toolbarProps} />
         <ErrorBanner
-          title="Could not load PR data."
+          title='Could not load PR data.'
           error={loadError}
           onRetry={() => void onRefresh()}
-          retryLabel="Retry"
+          retryLabel='Retry'
           retrying={refreshing}
         />
       </div>
@@ -761,17 +757,15 @@ export function PRDetail({
   const structuralLoading = !detail || !differences;
 
   return (
-    <div className="pr-detail">
+    <div className='pr-detail'>
       <Toolbar {...toolbarProps} />
-      {structuralLoading && (
-        <div className="pr-load-bar" role="presentation" aria-hidden />
-      )}
+      {structuralLoading && <div className='pr-load-bar' role='presentation' aria-hidden />}
       {actionError != null && !mergeOpen && !editOpen && (
         <ErrorBanner
-          title="Action failed."
+          title='Action failed.'
           error={actionError}
           onRetry={() => setActionError(null)}
-          retryLabel="Dismiss"
+          retryLabel='Dismiss'
         />
       )}
       {metaOpen && detail && (
@@ -780,16 +774,16 @@ export function PRDetail({
           differences={differences}
           mergeability={mergeability}
           approval={approval}
-          approvalCount={
-            approval?.states.filter((s) => s.approvalState === 'APPROVE').length ?? 0
-          }
+          approvalCount={approval?.states.filter((s) => s.approvalState === 'APPROVE').length ?? 0}
           fileCount={differences ? differences.files.length : null}
           selfApproved={approval?.selfApproved ?? false}
           webUrl={webUrl}
         />
       )}
-      <div className="pr-body">
+      <div className='pr-body'>
         <FileSidebar
+          sidebarOpen={sidebarOpen}
+          sidebarWidth={sidebarWidth}
           tab={sidebarTab}
           onChangeTab={onChangeSidebarTab}
           files={currentDiff?.files ?? differences?.files ?? []}
@@ -806,13 +800,25 @@ export function PRDetail({
           activityLoading={activityLoading}
           onActivitySelect={onActivitySelect}
         />
-        <div className="diff-area">
+        {sidebarOpen && (
+          <div className='sidebar-edge'>
+            <div className='sidebar-resize-handle' onMouseDown={onResizeMouseDown} />
+          </div>
+        )}
+        <div className='diff-area'>
+          <div className='diff-topbar'>
+            <button
+              type='button'
+              className='diff-sidebar-toggle'
+              aria-pressed={sidebarOpen}
+              onClick={toggleSidebar}
+              title={sidebarOpen ? 'Hide file list' : 'Show file list'}
+              aria-label={sidebarOpen ? 'Hide file list' : 'Show file list'}>
+              <PanelLeft size={15} filled={sidebarOpen} />
+            </button>
+          </div>
           {viewMode === 'commit' && selectedCommit && (
-            <CommitBanner
-              commit={selectedCommit}
-              onBack={onBackToPrDiff}
-              loading={commitDiffLoading}
-            />
+            <CommitBanner commit={selectedCommit} onBack={onBackToPrDiff} loading={commitDiffLoading} />
           )}
           {viewMode === 'commit' && commitDiffError ? (
             <ErrorBanner
@@ -822,17 +828,17 @@ export function PRDetail({
                 setCommitDiffError(null);
                 setSelectedCommit((c) => (c ? { ...c } : c));
               }}
-              retryLabel="Retry"
+              retryLabel='Retry'
               retrying={commitDiffLoading}
             />
           ) : viewMode === 'commit' && !commitDiff ? (
-            <DiffLoading label="Loading commit diff" />
+            <DiffLoading label='Loading commit diff' />
           ) : viewMode === 'pr' && !differences ? (
-            <DiffLoading label="Loading diff" />
+            <DiffLoading label='Loading diff' />
           ) : !currentDiff || currentDiff.files.length === 0 || !ctx ? (
-            <div className="empty">No files changed.</div>
+            <div className='empty'>No files changed.</div>
           ) : (
-            <div className="diff-stream">
+            <div className='diff-stream'>
               <ContinuousDiff
                 ref={diffRef}
                 files={currentDiff.files}
@@ -847,47 +853,38 @@ export function PRDetail({
           )}
         </div>
         {showGeneral && generalComments.length > 0 && (
-          <aside className="general-comments">
-            <div className="general-head">
+          <aside className='general-comments'>
+            <div className='general-head'>
               <h3>General comments ({generalComments.length})</h3>
-              <button onClick={() => setShowGeneral(false)}>×</button>
+              <button onClick={() => setShowGeneral(false)} aria-label='Hide general comments'>
+                <X size={14} />
+              </button>
             </div>
             {generalComments.map((t) => (
-              <div key={t.threadId} className="thread thread-flat">
+              <div key={t.threadId} className='thread thread-flat'>
                 {t.comments.map((c) => {
-                  const canDelete =
-                    !!approval?.selfArn &&
-                    !c.deleted &&
-                    c.authorArn === approval.selfArn;
+                  const canDelete = !!approval?.selfArn && !c.deleted && c.authorArn === approval.selfArn;
                   return (
-                    <div
-                      key={c.id}
-                      className={`comment${c.deleted ? ' deleted' : ''}`}
-                    >
-                      <div className="comment-head">
-                        <span className="author">{shortArn(c.authorArn)}</span>
-                        <span className="when">{fmt(c.createdAt)}</span>
+                    <div key={c.id} className={`comment${c.deleted ? ' deleted' : ''}`}>
+                      <div className='comment-head'>
+                        <span className='author'>{shortArn(c.authorArn)}</span>
+                        <span className='when'>{fmt(c.createdAt)}</span>
                         {canDelete && (
                           <>
-                            <span className="grow" />
+                            <span className='grow' />
                             <button
-                              type="button"
-                              className="comment-delete"
+                              type='button'
+                              className='comment-delete'
                               onClick={() => void deleteComment(c.id)}
-                              aria-label="Delete this comment"
-                              title="Delete this comment"
-                            >
+                              aria-label='Delete this comment'
+                              title='Delete this comment'>
                               Delete
                             </button>
                           </>
                         )}
                       </div>
-                      <div className="comment-body">
-                        {c.deleted ? (
-                          <i>(deleted)</i>
-                        ) : (
-                          <Markdown source={c.content} />
-                        )}
+                      <div className='comment-body'>
+                        {c.deleted ? <i>(deleted)</i> : <Markdown source={c.content} />}
                       </div>
                     </div>
                   );
@@ -906,9 +903,7 @@ export function PRDetail({
             setActionError(null);
             setMergeOpen(false);
           }}
-          onMerge={(strategy, commitMessage) =>
-            void doMerge(strategy, commitMessage)
-          }
+          onMerge={(strategy, commitMessage) => void doMerge(strategy, commitMessage)}
         />
       )}
       {editOpen && detail && (
@@ -974,6 +969,8 @@ function Toolbar({
   onEdit,
   onClose,
   onReopen,
+  onOpenInAws,
+  hasWebUrl,
 }: {
   pr: PullRequestSummary;
   detail: PullRequestDetail | null;
@@ -995,6 +992,8 @@ function Toolbar({
   onEdit: () => void;
   onClose: () => void;
   onReopen: () => void;
+  onOpenInAws: () => void;
+  hasWebUrl: boolean;
 }): JSX.Element {
   const isOpen = detail?.status === 'OPEN';
   const isMerged = detail?.mergeState === 'MERGED';
@@ -1006,126 +1005,284 @@ function Toolbar({
   const approvedCount =
     approval?.states.filter((s) => s.approvalState === 'APPROVE').length ?? 0;
 
-  // When the details panel is open it already shows status / approval /
-  // mergeability badges and approval count. Showing the same chips in the
-  // toolbar is just duplication. Collapse those into the toolbar ONLY when
-  // the details panel is hidden, so the user still has the essentials.
-  const showInlineBadges = !metaOpen;
+  // Status: a single inline pill summarizing the PR's lifecycle state. The
+  // detailed view lives in PRMetadata; the toolbar pill is for at-a-glance
+  // scanning when the meta panel is collapsed.
+  const statusKind: StatusKind | null = detail
+    ? isMerged
+      ? 'merged'
+      : detail.status === 'OPEN'
+        ? 'open'
+        : 'closed'
+    : null;
+  const approvalKind: StatusKind | null = detail
+    ? (detail.approvalState.toLowerCase() as StatusKind)
+    : null;
 
   return (
     <div className="pr-toolbar">
-      <button onClick={onBack}>← Back</button>
-      <span className="pr-title">
-        <span className="id">#{pr.id}</span> {detail?.title ?? pr.title}
+      <button className="ghost" onClick={onBack} title="Back to PR list (Esc)">
+        <ArrowLeft size={14} />
+        <span>Back</span>
+      </button>
+      <span className="pr-toolbar-title">
+        <span className="id">#{pr.id}</span>
+        <span className="pr-toolbar-title-text">
+          {detail?.title ?? pr.title}
+        </span>
       </span>
-      {showInlineBadges && detail && (
-        <>
-          <span className={`badge ${detail.status}`}>{detail.status}</span>
-          {mergeability && <ToolbarMergeBadge m={mergeability} />}
-          <span className={`badge ${detail.approvalState}`}>
-            {detail.approvalState.replace('_', ' ')}
-          </span>
-          {approval && (
-            <span className="hint">
-              {approvedCount} approval{approvedCount === 1 ? '' : 's'}
-            </span>
-          )}
-        </>
+      {statusKind && <Pill kind={statusKind} />}
+      {approvalKind && <Pill kind={approvalKind} />}
+      {approval && approvedCount > 0 && (
+        <span className="pr-toolbar-count" title={`${approvedCount} approval${approvedCount === 1 ? '' : 's'}`}>
+          <Check size={12} />
+          <span>{approvedCount}</span>
+        </span>
       )}
       <span className="grow" />
       <button
+        className="ghost icon"
         onClick={onRefresh}
         disabled={refreshing}
         title="Bypass local cache and re-fetch this PR from AWS"
+        aria-label="Refresh"
       >
-        {refreshing ? 'Refreshing…' : '↻ Refresh'}
+        <RefreshCw size={14} />
       </button>
-      <button onClick={onToggleMeta}>
-        {metaOpen ? 'Hide details' : 'Show details'}
+      <button
+        className="ghost icon"
+        onClick={onToggleMeta}
+        title={metaOpen ? 'Hide details panel' : 'Show details panel'}
+        aria-label={metaOpen ? 'Hide details' : 'Show details'}
+      >
+        {metaOpen ? <EyeOff size={14} /> : <Eye size={14} />}
       </button>
       {generalCount > 0 && (
-        <button onClick={onToggleGeneral}>
-          {showGeneral ? 'Hide' : 'Show'} general comments ({generalCount})
+        <button
+          className={showGeneral ? 'ghost' : 'ghost icon'}
+          onClick={onToggleGeneral}
+          title={showGeneral ? 'Hide general comments' : 'Show general comments'}
+          aria-label="Toggle general comments"
+        >
+          <MessageSquare size={14} />
+          <span>{generalCount}</span>
         </button>
       )}
-      {canEdit && (
-        <button onClick={onEdit} disabled={busyAny} title="Edit title and description">
-          Edit
-        </button>
-      )}
-      {canClose && (
-        <button onClick={onClose} disabled={busyAny}>
-          {actionBusy === 'status' ? 'Working…' : 'Close'}
-        </button>
-      )}
-      {canReopen && (
-        <button onClick={onReopen} disabled={busyAny}>
-          {actionBusy === 'status' ? 'Working…' : 'Reopen'}
-        </button>
-      )}
-      {approval &&
-        (approval.selfApproved ? (
-          <button onClick={onRevoke} disabled={approvalBusy}>
-            {approvalBusy ? 'Revoking…' : 'Revoke approval'}
-          </button>
-        ) : (
-          <button onClick={onApprove} disabled={approvalBusy}>
-            {approvalBusy ? 'Approving…' : 'Approve'}
-          </button>
-        ))}
+      <OverflowMenu
+        canEdit={canEdit}
+        canClose={canClose}
+        canReopen={canReopen}
+        busyAny={busyAny}
+        actionBusy={actionBusy}
+        selfApproved={!!approval?.selfApproved}
+        approvalBusy={approvalBusy}
+        onEdit={onEdit}
+        onClose={onClose}
+        onReopen={onReopen}
+        onApprove={onApprove}
+        onRevoke={onRevoke}
+        onOpenInAws={onOpenInAws}
+        hasWebUrl={hasWebUrl}
+      />
       {canMerge && (
         <button className="primary" onClick={onMerge} disabled={busyAny}>
-          {actionBusy === 'merge' ? 'Merging…' : 'Merge'}
+          <GitMerge size={14} />
+          <span>{actionBusy === 'merge' ? 'Merging…' : 'Merge'}</span>
         </button>
       )}
     </div>
   );
 }
 
-// Compact mergeability badge for the toolbar. Mirrors PRMetadata's badge but
-// without the long tooltip strings — the details panel owns the rich version.
-function ToolbarMergeBadge({
-  m,
-}: {
-  m: PullRequestMergeability;
-}): JSX.Element | null {
-  // Closed-without-merge: the parent already renders the "CLOSED" status
-  // badge. A second badge here would just repeat the information.
-  if (m.state === 'closed_unmerged') return null;
-  const cls: Record<Exclude<MergeabilityState, 'closed_unmerged'>, string> = {
-    already_merged: 'MERGED',
-    mergeable: 'APPROVED',
-    has_conflicts: 'NOT_APPROVED',
-    unknown: 'UNKNOWN',
-  };
-  const label: Record<Exclude<MergeabilityState, 'closed_unmerged'>, string> = {
-    already_merged: 'MERGED',
-    mergeable: 'MERGEABLE',
-    has_conflicts: 'CONFLICTS',
-    unknown: 'UNKNOWN',
-  };
-  return (
-    <span className={`badge ${cls[m.state]}`} title={mergeTooltip(m)}>
-      {label[m.state]}
-      {m.state === 'has_conflicts' && m.conflictCount
-        ? ` (${m.conflictCount})`
-        : ''}
-    </span>
-  );
+type StatusKind =
+  | 'open'
+  | 'closed'
+  | 'merged'
+  | 'approved'
+  | 'not_approved'
+  | 'no_rules'
+  | 'unknown';
+
+function Pill({ kind }: { kind: StatusKind }): JSX.Element {
+  const label =
+    kind === 'open'
+      ? 'Open'
+      : kind === 'closed'
+        ? 'Closed'
+        : kind === 'merged'
+          ? 'Merged'
+          : kind === 'approved'
+            ? 'Approved'
+            : kind === 'not_approved'
+              ? 'Not approved'
+              : kind === 'no_rules'
+                ? 'No rules'
+                : 'Unknown';
+  return <span className={`pill pill-${kind}`}>{label}</span>;
 }
 
-function mergeTooltip(m: PullRequestMergeability): string {
-  switch (m.state) {
-    case 'already_merged':
-      return m.mergedBy ? `Merged by ${shortArn(m.mergedBy)}` : 'Merged';
-    case 'mergeable':
-      return `Mergeable via: ${m.mergeOptions.join(', ') || '?'}`;
-    case 'has_conflicts':
-      return m.reason ?? 'Manual merge required';
-    case 'unknown':
-    default:
-      return m.reason ?? "Mergeability couldn't be determined";
+/* Overflow menu — gathers every low-frequency action (Edit, Close/Reopen,
+ * Approve/Revoke, Open in AWS) behind a single ⋯ button. The toolbar
+ * stays at ~5 visible buttons across all PR states. */
+function OverflowMenu({
+  canEdit,
+  canClose,
+  canReopen,
+  busyAny,
+  actionBusy,
+  selfApproved,
+  approvalBusy,
+  onEdit,
+  onClose,
+  onReopen,
+  onApprove,
+  onRevoke,
+  onOpenInAws,
+  hasWebUrl,
+}: {
+  canEdit: boolean;
+  canClose: boolean;
+  canReopen: boolean;
+  busyAny: boolean;
+  actionBusy: null | 'merge' | 'status' | 'edit';
+  selfApproved: boolean;
+  approvalBusy: boolean;
+  onEdit: () => void;
+  onClose: () => void;
+  onReopen: () => void;
+  onApprove: () => void;
+  onRevoke: () => void;
+  onOpenInAws: () => void;
+  hasWebUrl: boolean;
+}): JSX.Element {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  // Close on outside click + Esc. Same pattern as the other popups.
+  useEffect(() => {
+    if (!open) return;
+    function onDown(e: MouseEvent): void {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    function onKey(e: KeyboardEvent): void {
+      if (e.key === 'Escape') setOpen(false);
+    }
+    window.addEventListener('mousedown', onDown);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('mousedown', onDown);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  // Don't render the trigger if every item would be hidden — keep the
+  // toolbar clean when the PR is in a state with no overflow actions.
+  if (!canEdit && !canClose && !canReopen && !selfApproved && !hasWebUrl) {
+    return <></>;
   }
+
+  return (
+    <div className="overflow-menu" ref={ref}>
+      <button
+        className="ghost icon"
+        onClick={() => setOpen((v) => !v)}
+        title="More actions"
+        aria-label="More actions"
+        aria-expanded={open}
+      >
+        <MoreHorizontal size={14} />
+      </button>
+      {open && (
+        <div className="overflow-menu-popup" role="menu">
+          {canEdit && (
+            <button
+              className="overflow-item"
+              role="menuitem"
+              disabled={busyAny}
+              onClick={() => {
+                setOpen(false);
+                onEdit();
+              }}
+            >
+              <Edit3 size={14} />
+              <span>Edit title & description</span>
+            </button>
+          )}
+          {selfApproved ? (
+            <button
+              className="overflow-item"
+              role="menuitem"
+              disabled={approvalBusy}
+              onClick={() => {
+                setOpen(false);
+                onRevoke();
+              }}
+            >
+              <XCircle size={14} />
+              <span>{approvalBusy ? 'Revoking…' : 'Revoke approval'}</span>
+            </button>
+          ) : (
+            <button
+              className="overflow-item"
+              role="menuitem"
+              disabled={approvalBusy}
+              onClick={() => {
+                setOpen(false);
+                onApprove();
+              }}
+            >
+              <CheckCircle size={14} />
+              <span>{approvalBusy ? 'Approving…' : 'Approve'}</span>
+            </button>
+          )}
+          {canClose && (
+            <button
+              className="overflow-item overflow-item-danger"
+              role="menuitem"
+              disabled={busyAny}
+              onClick={() => {
+                setOpen(false);
+                onClose();
+              }}
+            >
+              <X size={14} />
+              <span>{actionBusy === 'status' ? 'Working…' : 'Close PR'}</span>
+            </button>
+          )}
+          {canReopen && (
+            <button
+              className="overflow-item"
+              role="menuitem"
+              disabled={busyAny}
+              onClick={() => {
+                setOpen(false);
+                onReopen();
+              }}
+            >
+              <RefreshCw size={14} />
+              <span>{actionBusy === 'status' ? 'Working…' : 'Reopen PR'}</span>
+            </button>
+          )}
+          {hasWebUrl && (
+            <>
+              <div className="overflow-sep" />
+              <button
+                className="overflow-item"
+                role="menuitem"
+                onClick={() => {
+                  setOpen(false);
+                  onOpenInAws();
+                }}
+              >
+                <ExternalLink size={14} />
+                <span>Open in AWS Console</span>
+              </button>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function shortArn(arn: string | undefined): string {
@@ -1160,7 +1317,8 @@ function CommitBanner({
         onClick={onBack}
         title="Return to the full PR diff (Esc)"
       >
-        ← Back to PR diff
+        <ArrowLeft size={12} />
+        Back to PR diff
       </button>
       <code className="commit-banner-sha" title={commit.id}>
         {commit.id.slice(0, 7)}

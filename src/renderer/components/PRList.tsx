@@ -1,6 +1,19 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import type { PullRequestSummary, PullRequestTarget } from '@shared/types';
 import { api, unwrap } from '../api';
+import {
+  GitPullRequest,
+  GitMerge,
+  ArrowRight,
+  ChevronDown,
+  ChevronUp,
+  Copy,
+  FileText,
+  ExternalLink,
+  Check,
+} from '../icons';
+import { ContextMenu } from './ContextMenu';
+import type { ContextMenuItem } from './ContextMenu';
 
 type SortKey =
   | 'id'
@@ -21,6 +34,13 @@ export function PRList({ prs, repositoryName, onOpen }: Props): JSX.Element {
   const [sortKey, setSortKey] = useState<SortKey>('lastActivityAt');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   const tbodyRef = useRef<HTMLTableSectionElement | null>(null);
+
+  const [contextMenu, setContextMenu] = useState<{
+    pr: PullRequestSummary;
+    cellValue: string;
+    x: number;
+    y: number;
+  } | null>(null);
 
   const sorted = useMemo(() => {
     const copy = [...prs];
@@ -84,17 +104,77 @@ export function PRList({ prs, repositoryName, onOpen }: Props): JSX.Element {
 
   // Lazy lookup + open. We don't pre-resolve every row's URL because the
   // provider call is over IPC; doing it on demand keeps the list mount cheap.
-  const openExternal = useCallback(
+  const copyWebUrl = useCallback(
     async (pr: PullRequestSummary): Promise<void> => {
       if (!repositoryName) return;
       try {
         const url = await unwrap(api.prs.webUrl(repositoryName, pr.id));
-        if (url) window.open(url, '_blank', 'noopener,noreferrer');
+        if (url) void navigator.clipboard.writeText(url);
       } catch {
-        // Best-effort; the row still opens the in-app detail view.
+        // Best-effort
       }
     },
     [repositoryName],
+  );
+
+  // Resolves the AWS URL lazily (same IPC call as the bare-link copy) and
+  // writes a tab-separated row to the clipboard — the same shape you'd
+  // get from selecting the row in the AWS CodeCommit web PR list. The
+  // URL isn't part of any visible cell in the table, so we tack it on
+  // at the end of the row so the share actually contains a clickable
+  // link. Pasting into Slack/Teams/email/spreadsheet all "just work"
+  // because every cell is just the raw value separated by a tab.
+  const copyRow = useCallback(
+    async (pr: PullRequestSummary): Promise<void> => {
+      let url: string | undefined;
+      if (repositoryName) {
+        try {
+          const resolved = await unwrap(api.prs.webUrl(repositoryName, pr.id));
+          url = resolved || undefined;
+        } catch {
+          // URL is optional in the row copy; missing is fine.
+        }
+      }
+      try {
+        await navigator.clipboard.writeText(formatRowForClipboard(pr, url));
+      } catch {
+        // Clipboard can fail in restricted contexts; silently no-op.
+      }
+    },
+    [repositoryName],
+  );
+
+  const buildContextMenu = useCallback(
+    (pr: PullRequestSummary, cellValue: string): ContextMenuItem[] => [
+      {
+        label: 'Copy Cell Value',
+        action: () => void navigator.clipboard.writeText(cellValue),
+        icon: <Copy size={14} />,
+      },
+      {
+        label: 'Copy Row',
+        action: () => void copyRow(pr),
+        icon: <FileText size={14} />,
+        feedback: {
+          label: 'Copied',
+          icon: <Check size={14} />,
+        },
+      },
+      ...(repositoryName
+        ? [
+            {
+              label: 'Copy AWS PR Link',
+              action: () => void copyWebUrl(pr),
+              icon: <ExternalLink size={14} />,
+              feedback: {
+                label: 'Copied',
+                icon: <Check size={14} />,
+              },
+            },
+          ]
+        : []),
+    ],
+    [repositoryName, copyWebUrl, copyRow],
   );
 
   if (prs.length === 0) {
@@ -102,10 +182,11 @@ export function PRList({ prs, repositoryName, onOpen }: Props): JSX.Element {
   }
 
   return (
+    <>
     <table className="prs">
       <thead>
         <tr>
-          <Th label="ID" k="id" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+          <Th label="#" k="id" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
           <Th label="Title" k="title" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
           <Th label="Author" k="author" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
           <Th
@@ -118,12 +199,12 @@ export function PRList({ prs, repositoryName, onOpen }: Props): JSX.Element {
           <th>Status</th>
           <th>Approval</th>
           <Th label="Updated" k="lastActivityAt" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
-          {repositoryName && <th aria-label="External link"></th>}
         </tr>
       </thead>
       <tbody ref={tbodyRef}>
         {sorted.map((pr) => {
           const target = pr.targets[0];
+          const authorName = shortArn(pr.authorArn);
           return (
             <tr
               key={pr.id}
@@ -133,48 +214,58 @@ export function PRList({ prs, repositoryName, onOpen }: Props): JSX.Element {
               aria-label={`Pull request ${pr.id}: ${pr.title}`}
               onClick={() => onOpen?.(pr)}
               onKeyDown={(e) => onRowKeyDown(e, pr)}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                const cellText = (e.target as HTMLElement).closest('td')?.textContent?.trim() ?? '';
+                setContextMenu({ pr, cellValue: cellText, x: e.clientX, y: e.clientY });
+              }}
             >
-              <td className="id">#{pr.id}</td>
-              <td>{pr.title}</td>
-              <td className="id">{shortArn(pr.authorArn)}</td>
-              <td className="target-cell">
+              <td className="cell-id">#{pr.id}</td>
+              <td className="cell-title">
+                <span className="pr-title-icon" aria-hidden>
+                  {pr.status === 'CLOSED' && pr.mergeState === 'MERGED' ? (
+                    <GitMerge size={14} />
+                  ) : (
+                    <GitPullRequest size={14} />
+                  )}
+                </span>
+                <span className="pr-title-text">{pr.title}</span>
+              </td>
+              <td className="cell-author" title={pr.authorArn ?? authorName}>
+                {authorName}
+              </td>
+              <td className="cell-target">
                 <BranchPair target={target} />
               </td>
-              <td>
+              <td className="cell-status">
                 {pr.status === 'CLOSED' && pr.mergeState === 'MERGED' ? (
-                  <span className="badge MERGED">MERGED</span>
+                  <StatusBadge kind="merged" />
                 ) : (
-                  <span className={`badge ${pr.status}`}>{pr.status}</span>
+                  <StatusBadge kind={pr.status.toLowerCase() as StatusKind} />
                 )}
               </td>
-              <td>
-                <span className={`badge ${pr.approvalState}`}>
-                  {pr.approvalState.replace('_', ' ')}
-                </span>
+              <td className="cell-approval">
+                <StatusBadge
+                  kind={pr.approvalState.toLowerCase() as StatusKind}
+                />
               </td>
-              <td className="id">{fmtDate(pr.lastActivityAt)}</td>
-              {repositoryName && (
-                <td className="row-actions">
-                  <button
-                    type="button"
-                    className="row-external"
-                    title="Open in AWS CodeCommit console"
-                    aria-label={`Open PR ${pr.id} in AWS CodeCommit console`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void openExternal(pr);
-                    }}
-                    onKeyDown={(e) => e.stopPropagation()}
-                  >
-                    ↗
-                  </button>
-                </td>
-              )}
+              <td className="cell-updated" title={pr.lastActivityAt}>
+                {fmtRel(pr.lastActivityAt)}
+              </td>
             </tr>
           );
         })}
       </tbody>
     </table>
+    {contextMenu && (
+      <ContextMenu
+        x={contextMenu.x}
+        y={contextMenu.y}
+        items={buildContextMenu(contextMenu.pr, contextMenu.cellValue)}
+        onClose={() => setContextMenu(null)}
+      />
+    )}
+    </>
   );
 }
 
@@ -189,23 +280,20 @@ const SKELETON_TITLE_WIDTHS = [62, 48, 78, 40, 70, 54, 84, 46];
 
 export function PRListSkeleton({
   rows = 8,
-  withLink = true,
 }: {
   rows?: number;
-  withLink?: boolean;
 }): JSX.Element {
   return (
     <table className="prs prs-skeleton" aria-hidden role="presentation">
       <thead>
         <tr>
-          <th>ID</th>
+          <th>#</th>
           <th>Title</th>
           <th>Author</th>
           <th>Target</th>
           <th>Status</th>
           <th>Approval</th>
           <th>Updated</th>
-          {withLink && <th />}
         </tr>
       </thead>
       <tbody>
@@ -243,11 +331,6 @@ export function PRListSkeleton({
             <td>
               <span className="sk" style={{ width: 64 }} />
             </td>
-            {withLink && (
-              <td>
-                <span className="sk sk-dot" />
-              </td>
-            )}
           </tr>
         ))}
       </tbody>
@@ -268,12 +351,43 @@ function BranchPair({
       <code className="branch source" title={target.sourceReference || source}>
         {source || '?'}
       </code>
-      <span className="branch-arrow">→</span>
+      <ArrowRight size={12} className="branch-arrow" />
       <code className="branch dest" title={target.destinationReference || dest}>
         {dest || '?'}
       </code>
     </span>
   );
+}
+
+/* Status pill — single component for every status variant. Uses a single
+ * shape recipe: filled background at low alpha, border at 30% alpha, label
+ * text in the role color. No emoji, no decoration, the letter + color
+ * together carry meaning (color-blind safe). */
+type StatusKind =
+  | 'open'
+  | 'closed'
+  | 'merged'
+  | 'approved'
+  | 'not_approved'
+  | 'no_rules'
+  | 'unknown';
+
+function StatusBadge({ kind }: { kind: StatusKind }): JSX.Element {
+  const label =
+    kind === 'open'
+      ? 'Open'
+      : kind === 'closed'
+        ? 'Closed'
+        : kind === 'merged'
+          ? 'Merged'
+          : kind === 'approved'
+            ? 'Approved'
+            : kind === 'not_approved'
+              ? 'Not approved'
+              : kind === 'no_rules'
+                ? 'No rules'
+                : 'Unknown';
+  return <span className={`pill pill-${kind}`}>{label}</span>;
 }
 
 function stripRefs(ref: string | undefined): string {
@@ -305,7 +419,15 @@ function Th(props: {
       }}
     >
       {props.label}
-      {active && <span className="arrow">{props.sortDir === 'asc' ? '▲' : '▼'}</span>}
+      {active && (
+        <span className="sort-arrow">
+          {props.sortDir === 'asc' ? (
+            <ChevronUp size={12} />
+          ) : (
+            <ChevronDown size={12} />
+          )}
+        </span>
+      )}
     </th>
   );
 }
@@ -358,9 +480,65 @@ function shortArn(arn: string | undefined): string {
   return slash >= 0 ? arn.slice(slash + 1) : arn;
 }
 
-function fmtDate(iso: string | undefined): string {
+function formatRowForClipboard(
+  pr: PullRequestSummary,
+  url?: string,
+): string {
+  const target = pr.targets[0];
+  const status =
+    pr.status === 'CLOSED' && pr.mergeState === 'MERGED'
+      ? 'Merged'
+      : pr.status === 'CLOSED'
+        ? 'Closed'
+        : 'Open';
+  const approval = pr.approvalState
+    .replace('_', ' ')
+    .toLowerCase()
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+  const source = target ? stripRefs(target.sourceReference) : '';
+  const dest = target ? stripRefs(target.destinationReference) : '';
+  const branches = source && dest ? `${source} → ${dest}` : source || dest;
+  const author = shortArn(pr.authorArn);
+  const updated = pr.lastActivityAt ? fmtRel(pr.lastActivityAt) : '';
+
+  // Conversational multi-line share text. Reads like English in any
+  // chat/email/doc context with no escaping, no markdown that might
+  // not render, no tabs that collapse. Line 1 is the headline so it
+  // previews clearly in a chat notification. Line 2 is the branches
+  // (joined with an arrow — natural to read as "from X to Y"). Line 3
+  // is the meta: author, last activity, status, approval. The URL
+  // goes on its own line at the end so it's easy to click in any
+  // client that auto-links.
+  const lines: string[] = [`#${pr.id} ${pr.title}`];
+  if (branches) lines.push(branches);
+  const meta = [author, updated, status, approval].filter(Boolean).join(' · ');
+  if (meta) lines.push(meta);
+  if (url) lines.push(url);
+  return lines.join('\n');
+}
+
+/* Relative time formatter: "just now", "5m", "2h", "3d", "2w", "Mar 14".
+ * Falls back to locale date for anything older than 60 days. Engineers
+ * scan relative times in lists — "5h ago" is one read, "5/30/2026,
+ * 11:34:02 AM" is four. */
+function fmtRel(iso: string | undefined): string {
   if (!iso) return '';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '';
-  return d.toLocaleString();
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return '';
+  const diff = Date.now() - t;
+  const abs = Math.abs(diff);
+  const minute = 60_000;
+  const hour = 60 * minute;
+  const day = 24 * hour;
+  const week = 7 * day;
+  const month = 30 * day;
+  if (abs < minute) return 'just now';
+  if (abs < hour) return `${Math.round(abs / minute)}m`;
+  if (abs < day) return `${Math.round(abs / hour)}h`;
+  if (abs < week) return `${Math.round(abs / day)}d`;
+  if (abs < month) return `${Math.round(abs / week)}w`;
+  return new Date(t).toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+  });
 }

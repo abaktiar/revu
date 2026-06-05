@@ -15,6 +15,7 @@ import { KeyboardHelpOverlay } from './components/KeyboardHelpOverlay';
 import { ErrorBanner } from './components/ErrorBanner';
 import { SyntheticDiffView } from './components/SyntheticDiffView';
 import { RepoSwitcher } from './components/RepoSwitcher';
+import { HelpCircle, Settings as SettingsIcon, RefreshCw } from './icons';
 import './extra.css';
 
 // Vite injects import.meta.env.DEV; it isn't in the renderer's TS lib (types:
@@ -465,7 +466,9 @@ export function App(): JSX.Element {
     <div className="app">
       <div className="topbar">
         <div className="brand">
-          revu<span className="brand-scope">for CodeCommit</span>
+          <span className="brand-mark" aria-hidden />
+          <span className="brand-name">revu</span>
+          <span className="brand-scope">CodeCommit</span>
         </div>
         <RepoSwitcher
           current={settings.repositoryName}
@@ -481,14 +484,20 @@ export function App(): JSX.Element {
         <span className="grow" />
         <SettingsSummary settings={settings} />
         <button
+          className="ghost icon"
           onClick={() => setHelpOpen(true)}
           title="Keyboard shortcuts (?)"
           aria-label="Keyboard shortcuts"
         >
-          ?
+          <HelpCircle size={16} />
         </button>
-        <button onClick={() => setSettingsOpen((v) => !v)}>
-          {settingsOpen ? 'Close settings' : 'Settings'}
+        <button
+          className="ghost icon"
+          onClick={() => setSettingsOpen((v) => !v)}
+          title="Settings"
+          aria-label="Settings"
+        >
+          <SettingsIcon size={16} />
         </button>
       </div>
       {settingsOpen && (
@@ -528,7 +537,7 @@ export function App(): JSX.Element {
           // Show the table skeleton so the structure is already in place; the
           // chip in PRFilters carries the live counter. The skeleton swaps for
           // the real list the instant the first PR streams in.
-          <PRListSkeleton withLink={!!settings.repositoryName} />
+          <PRListSkeleton />
         ) : error ? null : (
           <div className="empty">
             {isReadyToFetch(settings)
@@ -583,13 +592,24 @@ function SettingsSummary({ settings }: { settings: AppSettings }): JSX.Element {
   const credLabel =
     settings.credentialSource === 'keys'
       ? settings.hasManualKeys
-        ? 'keys ✓'
-        : 'keys (not set)'
-      : (settings.profile ?? 'default chain');
-  // Repo name is intentionally omitted here — the RepoSwitcher trigger already
-  // names the active repository, so repeating it in the summary is redundant.
-  const parts = [credLabel, settings.region ?? 'no region'];
-  return <span className="summary">{parts.join('  ·  ')}</span>;
+        ? 'keys'
+        : 'no keys'
+      : settings.profile ?? 'default chain';
+  // Repo name is intentionally omitted here — the RepoSwitcher trigger
+  // already names the active repository, so repeating it in the summary
+  // would be redundant.
+  const regionLabel = settings.region ?? 'no region';
+  // Status dot color tracks whether the connection is configured end-to-end.
+  // (We don't read AWS state here — just whether everything required is set.)
+  const isReady = isReadyToFetch(settings);
+  return (
+    <span className={`summary${isReady ? '' : ' is-warn'}`}>
+      <span className="summary-dot" aria-hidden />
+      <span>{credLabel}</span>
+      <span style={{ opacity: 0.5 }}>·</span>
+      <span>{regionLabel}</span>
+    </span>
+  );
 }
 
 function isReadyToFetch(s: AppSettings): boolean {

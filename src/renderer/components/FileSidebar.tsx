@@ -5,6 +5,18 @@ import type {
   FileDiffEntry,
   PullRequestCommit,
 } from '@shared/types';
+import {
+  ArrowUp,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  GitBranch,
+  GitMerge,
+  MessageSquare,
+  RefreshCw as RefreshCwIcon,
+  Reply as ReplyIcon,
+  Star,
+} from '../icons';
 
 export type SidebarTab = 'files' | 'commits' | 'activity';
 
@@ -26,6 +38,9 @@ interface Props {
   // Tabs
   tab: SidebarTab;
   onChangeTab: (next: SidebarTab) => void;
+  // Sidebar visibility & width (controlled by PRDetail for toggle/resize)
+  sidebarOpen?: boolean;
+  sidebarWidth?: number;
   // Files panel
   files: FileDiffEntry[];
   selectedPath?: string;
@@ -51,6 +66,8 @@ interface Props {
 export function FileSidebar({
   tab,
   onChangeTab,
+  sidebarOpen,
+  sidebarWidth,
   files,
   selectedPath,
   commentCounts,
@@ -65,8 +82,17 @@ export function FileSidebar({
   activityLoading,
   onActivitySelect,
 }: Props): JSX.Element {
+  const isCollapsed = sidebarOpen === false;
+  const sidebarClassName = `file-sidebar${isCollapsed ? ' is-collapsed' : ''}`;
+  // Only pin an explicit width while open. When collapsed, leave width to CSS
+  // (the `.is-collapsed { width: 0 }` rule). An inline width here would win on
+  // specificity and keep the panel occupying its space even while invisible —
+  // which is exactly why the diff didn't reclaim the width when hidden.
+  const sidebarStyle =
+    !isCollapsed && sidebarWidth != null ? { width: sidebarWidth } : undefined;
+
   return (
-    <div className="file-sidebar">
+    <div className={sidebarClassName} style={sidebarStyle}>
       <div className="file-sidebar-tabs" role="tablist" aria-label="Sidebar">
         <button
           type="button"
@@ -436,7 +462,9 @@ function DirRow({
       onClick={onToggle}
       title={name}
     >
-      <span className="tree-chevron">{collapsed ? '▸' : '▾'}</span>
+      <span className="tree-chevron">
+        {collapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
+      </span>
       <span className="tree-dir-name">{name}</span>
       <span className="tree-dir-count">{fileCount}</span>
     </li>
@@ -706,20 +734,20 @@ function activityVerb(e: ActivityEvent): string {
   }
 }
 
-function activityIcon(e: ActivityEvent): string {
+function activityIcon(e: ActivityEvent): JSX.Element {
   switch (e.type) {
     case 'created':
-      return '◆';
+      return <GitBranch size={13} />;
     case 'statusChanged':
-      return '⊘';
+      return <RefreshCwIcon size={13} />;
     case 'sourceUpdated':
-      return '↑';
+      return <ArrowUp size={13} />;
     case 'approvalStateChanged':
-      return '✓';
+      return <Check size={13} />;
     case 'merged':
-      return '⇄';
+      return <GitMerge size={13} />;
     case 'comment':
-      return e.isReply ? '↩' : '💬';
+      return e.isReply ? <ReplyIcon size={13} /> : <MessageSquare size={13} />;
   }
 }
 

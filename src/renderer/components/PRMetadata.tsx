@@ -8,6 +8,13 @@ import type {
   PullRequestTarget,
 } from '@shared/types';
 import { Markdown } from './Markdown';
+import {
+  ArrowRight,
+  Check,
+  ExternalLink,
+  GitMerge,
+  User as UserIcon,
+} from '../icons';
 
 interface Props {
   detail: PullRequestDetail;
@@ -54,7 +61,7 @@ export function PRMetadata({
         <code className="branch source" title={target?.sourceReference}>
           {source || '?'}
         </code>
-        <span className="branch-arrow">→</span>
+        <ArrowRight size={12} className="branch-arrow" aria-hidden />
         <code className="branch dest" title={target?.destinationReference}>
           {dest || '?'}
         </code>
@@ -63,7 +70,7 @@ export function PRMetadata({
             <code title="source commit">
               {target.sourceCommitId.slice(0, 7)}
             </code>
-            <span className="branch-arrow">→</span>
+            <ArrowRight size={11} className="branch-arrow" aria-hidden />
             <code title="merge base / destination">
               {(target.mergeBase ?? target.destinationCommitId ?? '').slice(0, 7) ||
                 '?'}
@@ -74,16 +81,20 @@ export function PRMetadata({
 
       <div className="pr-meta-row">
         <span className="pr-meta-label">Status</span>
-        <span className={`badge ${detail.status}`}>{detail.status}</span>
+        <span className={`pill ${detail.status.toLowerCase()}`}>{detail.status}</span>
         {mergeability && <MergeabilityBadge m={mergeability} />}
-        <span className={`badge ${detail.approvalState}`}>
+        <span className={`pill ${detail.approvalState.toLowerCase()}`}>
           {detail.approvalState.replace('_', ' ')}
         </span>
         <span className="hint">
           {approvalCount} approval{approvalCount === 1 ? '' : 's'}
-          {selfApproved ? ' (you ✓)' : ''}
+          {selfApproved && (
+            <span className="self-approved">
+              <Check size={11} /> you
+            </span>
+          )}
         </span>
-        <span className="hint">·</span>
+        <span className="meta-sep" />
         {fileCount === null ? (
           <span
             className="pr-meta-pending"
@@ -99,12 +110,16 @@ export function PRMetadata({
 
       <div className="pr-meta-row">
         <span className="pr-meta-label">Author</span>
-        <code className="who">{shortArn(detail.authorArn)}</code>
+        <code className="who">
+          <UserIcon size={11} className="who-icon" aria-hidden />
+          {shortArn(detail.authorArn)}
+        </code>
         <span className="hint">opened</span>
         <span className="hint" title={detail.createdAt}>
           {fmtRel(detail.createdAt)}
         </span>
-        <span className="hint">· updated</span>
+        <span className="meta-sep" />
+        <span className="hint">updated</span>
         <span className="hint" title={detail.lastActivityAt}>
           {fmtRel(detail.lastActivityAt)}
         </span>
@@ -123,7 +138,8 @@ export function PRMetadata({
                 window.open(webUrl, '_blank', 'noopener,noreferrer');
               }}
             >
-              Open in AWS ↗
+              <ExternalLink size={12} />
+              Open in AWS
             </button>
           </>
         )}
@@ -139,7 +155,7 @@ export function PRMetadata({
           )}
           {mergeability.mergedAt && (
             <>
-              <span className="hint">·</span>
+              <span className="meta-sep" />
               <span className="hint" title={mergeability.mergedAt}>
                 {fmtRel(mergeability.mergedAt)}
               </span>
@@ -147,7 +163,7 @@ export function PRMetadata({
           )}
           {mergeability.mergedWith && (
             <>
-              <span className="hint">·</span>
+              <span className="meta-sep" />
               <span className="hint">
                 via {labelForMergeOption(mergeability.mergedWith)}
               </span>
@@ -171,13 +187,14 @@ export function PRMetadata({
           )}
           {mergeability.closedAt && (
             <>
-              <span className="hint">·</span>
+              <span className="meta-sep" />
               <span className="hint" title={mergeability.closedAt}>
                 {fmtRel(mergeability.closedAt)}
               </span>
             </>
           )}
-          <span className="hint">· without merging</span>
+          <span className="meta-sep" />
+          <span className="hint">without merging</span>
         </div>
       )}
 
@@ -227,7 +244,7 @@ function ApproverChip({
   return (
     <li className="pr-approver" title={entry.userArn}>
       <span className="pr-approver-check" aria-hidden="true">
-        ✓
+        <Check size={12} />
       </span>
       <code className="who">{shortArn(entry.userArn)}</code>
       {isSelf && <span className="pr-approver-self">you</span>}
@@ -270,7 +287,8 @@ function MergeabilityBadge({
           (m.mergeCommitId ? ` (${m.mergeCommitId.slice(0, 7)})` : '')
         : 'Merged';
       return (
-        <span className="badge MERGED" title={title}>
+        <span className="pill merged" title={title}>
+          <GitMerge size={11} />
           MERGED
         </span>
       );
@@ -278,7 +296,7 @@ function MergeabilityBadge({
     case 'mergeable': {
       const title = `Mergeable via: ${m.mergeOptions.join(', ') || '?'}`;
       return (
-        <span className="badge APPROVED" title={title}>
+        <span className="pill approved" title={title}>
           MERGEABLE
         </span>
       );
@@ -294,7 +312,7 @@ function MergeabilityBadge({
         : (m.reason ?? 'Manual merge required');
       const label = count > 0 ? `CONFLICTS (${count})` : 'CONFLICTS';
       return (
-        <span className="badge NOT_APPROVED" title={title}>
+        <span className="pill not_approved" title={title}>
           {label}
         </span>
       );
@@ -303,7 +321,7 @@ function MergeabilityBadge({
     default:
       return (
         <span
-          className="badge UNKNOWN"
+          className="pill unknown"
           title={m.reason ?? "Mergeability couldn't be determined"}
         >
           UNKNOWN

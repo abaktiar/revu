@@ -1,110 +1,162 @@
 /* ---- Theme tokens ---------------------------------------------------- */
-/* Token values live in three blocks:
- *   :root                     — default = Warp-inspired dark.
- *   :root[data-theme='dark']  — same as default; redundant for clarity.
- *   :root[data-theme='light'] — light-theme overrides.
- * theme.ts toggles data-theme on <html>; nothing else here cares which is
- * active. New colors should be added as tokens, not hardcoded — otherwise
- * the light theme won't pick them up.
- */
+/* Cool Indigo Workshop — single accent (indigo) on a 4-step cool neutral
+ * ladder. All tokens are defined here; components never reach for raw hex.
+ * The `*-rgb` triplets let rgba() literals elsewhere pick up theme colors
+ * without hardcoding values.
+ *
+ * Brand rules enforced as tokens:
+ *   - Never #000 or #fff — every neutral is tinted toward the accent hue.
+ *   - Single accent (indigo). 10%-of-surface rule applies to its usage.
+ *   - 1px hairlines separate surfaces; no drop shadows on dark.
+ *   - Status colors (ok / warn / bad / neutral) serve status, nothing else. */
 :root,
 :root[data-theme='dark'] {
   color-scheme: dark;
-  /* Warp Dark — matches warp_bundled/warp_dark.yaml from the Warp themes
-   * repo (the "Warp Dark" entry in the in-app theme picker). Pure-black
-   * canvas, cyan accent, vivid green/red diff colors. The `*-rgb` triplets
-   * exist so rgba() literals elsewhere in this file can pick up the theme's
-   * colors without hardcoding hex values — every literal references one of
-   * these tokens. */
-  --accent-rgb: 0, 194, 255;
-  --ok-rgb: 180, 250, 114;
-  --bad-rgb: 255, 130, 114;
-  --warn-rgb: 254, 253, 194;
-  --neutral-rgb: 142, 142, 142;
-  /* Dedicated diff palette — kept separate from --ok-rgb / --bad-rgb so the
-   * status colors used for badges and toasts (Warp's yellow-leaning lime and
-   * salmon) don't drag the diff wash into the same hue. These are GitHub's
-   * #3fb950 / #f85149 — true green / true red so the wash reads cleanly
-   * over the near-black panel. */
-  --diff-add-rgb: 63, 185, 80;
-  --diff-del-rgb: 248, 81, 73;
 
-  --bg: #0a0a0a;
-  --panel: #181818;
-  --panel-2: #222222;
-  --border: #2a2a2a;
-  --text: #ffffff;
-  --text-dim: #8e8e8e;
-  --accent: #00c2ff;
-  --accent-fade: #003140;
-  --ok: #b4fa72;
-  --warn: #fefdc2;
-  --bad: #ff8272;
-  --neutral: #8e8e8e;
-  --control: #1f1f1f;
-  --control-hover: #2a2a2a;
-  --control-active: #151515;
-  --focus-ring: rgba(var(--accent-rgb), 0.34);
+  /* Indigo accent — rgb triplet drives every rgba() literal that references
+   * the accent (focus ring, accent-fade, hover washes, etc.). */
+  --accent-rgb: 129, 140, 248;
+  --ok-rgb: 74, 222, 128;
+  --bad-rgb: 248, 113, 113;
+  --warn-rgb: 251, 191, 36;
+  --neutral-rgb: 148, 163, 184;
+
+  /* Diff wash is a quieter, less-saturated form of the status colors — the
+   * wash should never compete with syntax highlighting. */
+  --diff-add-rgb: 74, 222, 128;
+  --diff-del-rgb: 248, 113, 113;
+
+  /* 4-step neutral ladder. Each step ~4% lightness apart, every neutral
+   * carries a 270° indigo tint (chroma 0.018–0.030). The ladder is the
+   * entire surface vocabulary: bg sits behind panels, panels sit behind
+   * cards, cards sit behind dialogs. */
+  --bg: #0c0e18;        /* page canvas, behind everything */
+  --panel: #141729;     /* topbar, sidebar, settings, table header */
+  --panel-2: #1a1e34;   /* cards (composers, threads, segmented track) */
+  --panel-3: #1f2438;   /* code-blockquote background, hovered rows */
+  --border: #262b40;    /* the single 1px hairline */
+  --border-strong: #2f354e; /* hover state on hairlines */
+
+  /* Control surfaces — buttons, inputs, selects. Slightly warmer than the
+   * panel step so they read as raised on top of a panel. */
+  --control: #1d2138;
+  --control-hover: #252a45;
+  --control-active: #161930;
+
+  /* Text */
+  --text: #e6e8f0;
+  --text-dim: #8a8fa8;
+  --text-faint: #5b6075;
+
+  /* Accent */
+  --accent: #818cf8;
+  --accent-strong: #6366f1;
+  --accent-fade: rgba(129, 140, 248, 0.14);
+  --accent-wash: rgba(129, 140, 248, 0.08);
+  --focus-ring: rgba(129, 140, 248, 0.40);
   --primary-text: #ffffff;
 
-  /* Diff add/del — translucent tints over the panel surface. The colour reads
-   * as a soft wash rather than a solid block; the panel grain shows through.
-   * Gutters use a quieter alpha so the line numbers feel like scaffolding,
-   * not part of the change. Text uses the brightened-out form of the same
-   * hue so it sits cleanly on top of the tint without losing the syntax
-   * highlight palette underneath. */
-  --diff-add-bg: rgba(var(--diff-add-rgb), 0.20);
-  --diff-add-gutter: rgba(var(--diff-add-rgb), 0.10);
-  --diff-add-text: #aff5b4;
-  --diff-del-bg: rgba(var(--diff-del-rgb), 0.20);
-  --diff-del-gutter: rgba(var(--diff-del-rgb), 0.10);
-  --diff-del-text: #ffb4b0;
+  /* Status semantics */
+  --ok: #4ade80;
+  --warn: #fbbf24;
+  --bad: #f87171;
+  --neutral: #94a3b8;
 
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Ubuntu,
+  /* Diff add/del — translucent tints over the panel surface. Gutters use
+   * a quieter alpha so line numbers feel like scaffolding. Text uses a
+   * brightened-out form of the hue so it sits cleanly on top. */
+  --diff-add-bg: rgba(74, 222, 128, 0.13);
+  --diff-add-gutter: rgba(74, 222, 128, 0.06);
+  --diff-add-text: #a7f3d0;
+  --diff-del-bg: rgba(248, 113, 113, 0.13);
+  --diff-del-gutter: rgba(248, 113, 113, 0.06);
+  --diff-del-text: #fecaca;
+
+  /* Radii scale (3 sizes — everything is a multiple of 4px) */
+  --r-1: 4px;   /* kbd, tiny chips */
+  --r-2: 6px;   /* buttons, inputs, small controls */
+  --r-3: 8px;   /* cards (composers, threads, dialogs, file sections) */
+  --r-4: 12px;  /* modals, finder, large surfaces */
+
+  /* Spacing scale (4-based) */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 20px;
+  --s-6: 24px;
+  --s-7: 32px;
+  --s-8: 48px;
+
+  /* Motion — single timing curve for the whole app, applied via tokens
+   * so any future easing change is one edit. The cubic-bezier is a
+   * material-style decelerate: fast at start, soft landing. */
+  --ease: cubic-bezier(0.32, 0.72, 0, 1);
+  --t-fast: 100ms;
+  --t-med: 180ms;
+  --t-slow: 280ms;
+
+  /* Typography stack — system sans on every OS. We previously included a
+   * long fallback chain that rendered differently per platform; tightening
+   * to the host-OS pair makes the UI look consistent across the board. */
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui,
     sans-serif;
   font-size: 13px;
+  line-height: 1.5;
   color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
 :root[data-theme='light'] {
   color-scheme: light;
-  --accent-rgb: 9, 105, 218;
-  --ok-rgb: 26, 127, 55;
-  --bad-rgb: 207, 34, 46;
-  --warn-rgb: 154, 103, 0;
-  --neutral-rgb: 101, 109, 118;
-  /* GitHub light's diff base — same hues as the dark theme but skewed
-   * slightly cooler/darker for legibility over a white surface. */
-  --diff-add-rgb: 46, 160, 67;
-  --diff-del-rgb: 207, 34, 46;
 
-  --bg: #ffffff;
-  --panel: #f6f8fa;
-  --panel-2: #eaeef2;
-  --border: #d0d7de;
-  --text: #1f2328;
-  --text-dim: #656d76;
-  --accent: #0969da;
-  --accent-fade: #ddf4ff;
-  --ok: #1a7f37;
-  --warn: #9a6700;
-  --bad: #cf222e;
-  --neutral: #656d76;
-  --control: #f6f8fa;
-  --control-hover: #eaeef2;
-  --control-active: #d0d7de;
-  --focus-ring: rgba(var(--accent-rgb), 0.32);
+  --accent-rgb: 79, 70, 229;
+  --ok-rgb: 22, 163, 74;
+  --bad-rgb: 220, 38, 38;
+  --warn-rgb: 217, 119, 6;
+  --neutral-rgb: 100, 116, 139;
+
+  --diff-add-rgb: 22, 163, 74;
+  --diff-del-rgb: 220, 38, 38;
+
+  /* Light neutrals — same 4-step ladder, but skewed lighter and with less
+   * chroma. Every neutral still carries the indigo hue so the page reads
+   * as one surface. */
+  --bg: #fbfbfd;
+  --panel: #ffffff;
+  --panel-2: #f4f5fa;
+  --panel-3: #ecedf5;
+  --border: #e2e4ee;
+  --border-strong: #c8ccdc;
+
+  --control: #f4f5fa;
+  --control-hover: #ecedf5;
+  --control-active: #e2e4ee;
+
+  --text: #1a1d2e;
+  --text-dim: #5b6079;
+  --text-faint: #8a8fa8;
+
+  --accent: #4f46e5;
+  --accent-strong: #4338ca;
+  --accent-fade: rgba(79, 70, 229, 0.10);
+  --accent-wash: rgba(79, 70, 229, 0.06);
+  --focus-ring: rgba(79, 70, 229, 0.28);
   --primary-text: #ffffff;
 
-  /* Light-theme translucent diff tints. Same recipe as dark, just resolves
-   * over the white panel surface — alpha values nudged up because tints
-   * read quieter on white than on near-black. */
-  --diff-add-bg: rgba(var(--diff-add-rgb), 0.18);
-  --diff-add-gutter: rgba(var(--diff-add-rgb), 0.10);
-  --diff-add-text: #1a7f37;
-  --diff-del-bg: rgba(var(--diff-del-rgb), 0.18);
-  --diff-del-gutter: rgba(var(--diff-del-rgb), 0.10);
-  --diff-del-text: #82071e;
+  --ok: #16a34a;
+  --warn: #d97706;
+  --bad: #dc2626;
+  --neutral: #64748b;
+
+  --diff-add-bg: rgba(22, 163, 74, 0.10);
+  --diff-add-gutter: rgba(22, 163, 74, 0.05);
+  --diff-add-text: #15803d;
+  --diff-del-bg: rgba(220, 38, 38, 0.10);
+  --diff-del-gutter: rgba(220, 38, 38, 0.05);
+  --diff-del-text: #b91c1c;
 }
 
 * {
@@ -120,6 +172,14 @@ body,
   background: var(--bg);
 }
 
+/* ---- Base elements ---------------------------------------------------- */
+/* Every interactive primitive in the app (button, input, select, textarea,
+ * kbd, badge) lives in this section. The shape rules:
+ *   - buttons: 28px tall, --r-2 corners, 1px hairline
+ *   - inputs/selects: 28px tall, --r-2 corners, 1px hairline
+ *   - focus: border shifts to accent + 3px focus ring (the only color lift)
+ *   - no drop shadows on dark — hairline + surface step is the elevation */
+
 button,
 input,
 select,
@@ -130,42 +190,40 @@ textarea {
 
 button {
   appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   min-height: 28px;
-  background:
-    linear-gradient(rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0)),
-    var(--control);
+  padding: 0 10px;
+  background: var(--control);
   border: 1px solid var(--border);
   color: var(--text);
-  padding: 5px 11px;
-  border-radius: 7px;
+  border-radius: var(--r-2);
   cursor: pointer;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.06),
-    0 1px 1px rgba(0, 0, 0, 0.14);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
   transition:
-    background-color 150ms ease,
-    border-color 150ms ease,
-    box-shadow 150ms ease,
-    transform 80ms ease;
+    background-color var(--t-fast) var(--ease),
+    border-color var(--t-fast) var(--ease),
+    color var(--t-fast) var(--ease),
+    transform 80ms var(--ease);
 }
 
 button:hover:not(:disabled) {
-  border-color: var(--accent);
-  background:
-    linear-gradient(rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.005)),
-    var(--control-hover);
+  background: var(--control-hover);
+  border-color: var(--border-strong);
 }
 
 button:active:not(:disabled) {
   background: var(--control-active);
-  box-shadow:
-    inset 0 1px 2px rgba(0, 0, 0, 0.22),
-    0 1px 0 rgba(255, 255, 255, 0.03);
   transform: translateY(1px);
 }
 
 button:disabled {
-  opacity: 0.5;
+  opacity: 0.45;
   cursor: not-allowed;
 }
 
@@ -178,12 +236,42 @@ textarea:focus-visible {
   box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
+/* Primary action — solid accent fill. Used sparingly: merge, save, post. */
 button.primary {
-  background:
-    linear-gradient(rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0)),
-    var(--accent);
+  background: var(--accent);
   border-color: var(--accent);
-  color: var(--primary-text);
+  color: #ffffff;
+  font-weight: 600;
+}
+
+button.primary:hover:not(:disabled) {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+}
+
+button.primary:active:not(:disabled) {
+  background: var(--accent-strong);
+}
+
+/* Ghost — no background, no border until hover. For icon-only buttons and
+ * low-emphasis actions in dense toolbars. */
+button.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-dim);
+  padding: 0 8px;
+}
+
+button.ghost:hover:not(:disabled) {
+  background: var(--control-hover);
+  border-color: transparent;
+  color: var(--text);
+}
+
+/* Icon-only — square hit area, content centered. */
+button.icon {
+  width: 28px;
+  padding: 0;
 }
 
 input,
@@ -191,79 +279,200 @@ select,
 textarea {
   background: var(--panel-2);
   border: 1px solid var(--border);
-  border-radius: 7px;
-  padding: 6px 10px;
+  border-radius: var(--r-2);
+  padding: 0 10px;
   outline: none;
   min-height: 28px;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--text);
+  transition:
+    background-color var(--t-fast) var(--ease),
+    border-color var(--t-fast) var(--ease),
+    box-shadow var(--t-fast) var(--ease);
 }
 
-input[type='checkbox'] {
-  accent-color: var(--accent);
-  min-height: auto;
+textarea {
+  padding: 8px 10px;
+  line-height: 1.5;
+  resize: vertical;
+  min-height: 60px;
+  font-family: inherit;
+}
+
+input:hover:not(:focus):not(:disabled),
+select:hover:not(:focus):not(:disabled) {
+  border-color: var(--border-strong);
 }
 
 input:focus,
 select:focus,
 textarea:focus {
   border-color: var(--accent);
+  background: var(--panel);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--text-faint);
+}
+
+input[type='checkbox'] {
+  accent-color: var(--accent);
+  min-height: auto;
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+}
+
+/* kbd — visual chip for keyboard shortcuts. Uses --r-1 (4px), never --r-2;
+ * the kbd is small, the smaller radius reads better. */
+kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-1);
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--text-dim);
+  line-height: 1;
 }
 
 .app {
   display: flex;
   flex-direction: column;
   height: 100%;
+  min-height: 0;
   background: var(--bg);
+  /* Subtle vignette at the very top to give the surface a sense of depth
+   * without resorting to a drop shadow. Just a faint linear gradient
+   * masked to the top 80px. */
+  background:
+    linear-gradient(to bottom, rgba(129, 140, 248, 0.025) 0, transparent 80px),
+    var(--bg);
 }
 
+/* ---- Topbar ----------------------------------------------------------- */
 .topbar {
   display: flex;
   align-items: center;
-  gap: 16px;
-  padding: 10px 16px;
+  gap: var(--s-3);
+  padding: 0 var(--s-4);
+  height: 44px;
+  flex: 0 0 auto;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
   -webkit-app-region: drag;
-  /* Lift the topbar above the filters bar: the macOS vibrancy rules give
-   * `.filters` a `backdrop-filter`, which creates a stacking context. Without
-   * this, the filters bar (a later DOM sibling) paints over the RepoSwitcher
-   * popup, clipping it. */
+  /* Lift above the filters bar so floating popups (RepoSwitcher, etc.) are
+   * never clipped by a backdrop-filter stacking context. */
   position: relative;
   z-index: 30;
 }
 
+/* Wordmark. A small indigo glyph (the only place we use a filled shape for
+ * brand) plus a tight word + scope. The mark is drawn in CSS so it scales
+ * with the surrounding type and never has asset-loading latency. */
 .topbar .brand {
-  font-weight: 600;
-  letter-spacing: 0.5px;
   display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
+  align-items: center;
+  gap: 8px;
+  -webkit-app-region: no-drag;
+}
+
+.topbar .brand .brand-mark {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  background:
+    linear-gradient(135deg, var(--accent) 0%, var(--accent-strong) 100%);
+  flex: 0 0 auto;
+  /* Two pixel-sized dots inside, evoking a diff. The eyes (or the + and -)
+   * are the only color in the chrome, the only decoration that earns it. */
+  position: relative;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.topbar .brand .brand-mark::before,
+.topbar .brand .brand-mark::after {
+  content: '';
+  position: absolute;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.92);
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.topbar .brand .brand-mark::before { left: 3px; }
+.topbar .brand .brand-mark::after { right: 3px; }
+
+.topbar .brand .brand-name {
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: -0.005em;
+  color: var(--text);
 }
 
 .topbar .brand .brand-scope {
+  font-size: 11px;
   font-weight: 500;
-  font-size: 0.78em;
-  letter-spacing: 0;
   color: var(--text-dim);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .topbar .grow {
   flex: 1;
 }
 
+/* Right-side summary. Sits between the grow and the icon buttons. Mono so it
+ * reads as a status line, not a label. */
 .summary {
   color: var(--text-dim);
   font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-  font-size: 12px;
-  margin-right: 8px;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  -webkit-app-region: no-drag;
 }
 
+.summary .summary-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ok);
+  /* A slow, subtle pulse when the connection is healthy. Flat (no animation)
+   * when the dot is red/bad. */
+}
+
+.summary.is-bad .summary-dot { background: var(--bad); }
+.summary.is-warn .summary-dot { background: var(--warn); }
+
+/* ---- Settings panel ---------------------------------------------------- */
 .settings-panel {
   background: var(--panel);
   border-bottom: 1px solid var(--border);
-  padding: 14px 16px;
+  padding: var(--s-4) var(--s-5);
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--s-3);
+  /* The panel is a normal flex-column child of .app and stretches to its
+   * full width by default. Cap it to the viewport and clamp any child that
+   * would otherwise push the whole window into a horizontal scrollbar (a
+   * wide select option, a long paste in the keys editor, etc.). */
+  max-width: 100vw;
+  min-width: 0;
+  overflow-x: hidden;
 }
 
 button,
@@ -281,7 +490,7 @@ table.prs tr.clickable {
 .settings-panel .row {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--s-3);
   flex-wrap: wrap;
 }
 
@@ -289,10 +498,11 @@ table.prs tr.clickable {
   margin: 0;
   font-size: 11px;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.06em;
   color: var(--text-dim);
   font-weight: 600;
-  min-width: 92px;
+  min-width: 96px;
+  -webkit-app-region: no-drag;
 }
 
 .settings-panel label {
@@ -302,7 +512,8 @@ table.prs tr.clickable {
   gap: 4px;
   font-size: 11px;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.06em;
+  -webkit-app-region: no-drag;
 }
 
 .settings-panel input,
@@ -313,35 +524,165 @@ table.prs tr.clickable {
   color: var(--text);
 }
 
+/* ---- Segmented control ------------------------------------------------ */
 .seg {
   display: inline-flex;
+  background: var(--panel-2);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  overflow: hidden;
+  border-radius: var(--r-2);
+  padding: 2px;
+  gap: 2px;
 }
 
 .seg-btn {
-  background: var(--panel-2);
-  border: none;
-  border-radius: 0;
-  padding: 6px 14px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 0 12px;
+  min-height: 24px;
   color: var(--text-dim);
   cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  transition:
+    background-color var(--t-fast) var(--ease),
+    color var(--t-fast) var(--ease);
 }
 
-.seg-btn + .seg-btn {
-  border-left: 1px solid var(--border);
-}
-
-.seg-btn.active {
-  background: var(--accent-fade);
+.seg-btn:hover:not(.active):not(:disabled) {
+  background: var(--control-hover);
   color: var(--text);
 }
 
+.seg-btn.active {
+  background: var(--panel);
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
 .star {
-  padding: 4px 10px;
-  font-size: 16px;
-  line-height: 1;
+  padding: 0 10px;
+  color: var(--text-dim);
+}
+
+.star.is-favorited {
+  color: var(--warn);
+}
+
+/* The new settings panel groups related controls under a header. The old
+ * "row" layout was dense and AWS-Console-shaped; the new "section" layout
+ * gives each control group breathing room and a clear heading. */
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  gap: var(--s-5);
+  max-width: 920px;
+}
+
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-3);
+  padding: var(--s-4);
+}
+
+.settings-section-head h3 {
+  margin: 0;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.settings-section-head p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+
+.settings-section-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+.settings-row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+}
+
+.settings-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 500;
+  -webkit-app-region: no-drag;
+}
+
+.settings-label-grow {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.settings-label select,
+.settings-label input {
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--text);
+  min-width: 220px;
+}
+
+.settings-label-grow select,
+.settings-label-grow input {
+  min-width: 0;
+  width: 100%;
+}
+
+.settings-keys-saved {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: 6px 0;
+  font-size: 12.5px;
+  color: var(--text);
+}
+
+.settings-keys-saved .ok-icon {
+  color: var(--ok);
+  flex: 0 0 auto;
+}
+
+/* Rotating glyph for in-flight actions. Used by the settings refresh button
+ * and the PR detail refresh button. The animation is purely transform-based
+ * (no layout), so it stays at 60fps even mid-scroll. */
+.spin {
+  animation: icon-spin 800ms linear infinite;
+}
+
+@keyframes icon-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* The icon-bearing segmented control (theme picker, credentials picker).
+ * The button is a vertical flex of [icon, label] with a tight 4px gap. */
+.seg.seg-icons .seg-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
 }
 
 .keys {
@@ -350,17 +691,21 @@ table.prs tr.clickable {
 
 .keys .ok-dot {
   color: var(--ok);
-  font-size: 14px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ok);
+  display: inline-block;
 }
 
 .keys-edit {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--s-2);
   background: var(--panel-2);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 12px;
+  border-radius: var(--r-3);
+  padding: var(--s-3);
 }
 
 .keys-edit textarea {
@@ -371,34 +716,31 @@ table.prs tr.clickable {
   background: var(--bg);
   color: var(--text);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 10px;
+  border-radius: var(--r-2);
+  padding: var(--s-2);
   resize: vertical;
-}
-
-.keys-edit textarea:focus {
-  outline: none;
-  border-color: var(--accent);
 }
 
 .keys-actions {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--s-2);
   flex-wrap: wrap;
 }
 
 .hint {
   color: var(--text-dim);
   font-size: 12px;
+  line-height: 1.5;
 }
 
 .hint code {
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--r-1);
   padding: 1px 6px;
   font-size: 11px;
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
 }
 
 .hint.ok {
@@ -412,90 +754,32 @@ table.prs tr.clickable {
 /* Inline error rendered next to a Settings control: short, scoped to the
    panel rather than full-width like ErrorBanner. The hint line below the
    main message keeps the AWS suggestion ("refresh credentials in Settings",
-   etc.) visible without taking over the layout. */
+   etc.) visible without taking over the layout. The error uses a soft
+   tinted background + colored text, not a side-stripe border (banned). */
 .settings-inline-error {
-  display: block;
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
   max-width: 520px;
-  padding: 8px 10px;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--bad);
-  border-radius: 6px;
+  padding: var(--s-2) var(--s-3);
+  background: rgba(248, 113, 113, 0.08);
+  border: 1px solid rgba(248, 113, 113, 0.3);
+  border-radius: var(--r-2);
   line-height: 1.4;
+  color: var(--text);
+  font-size: 12.5px;
+}
+
+.settings-inline-error svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--bad);
 }
 
 .settings-inline-error-hint {
   margin-top: 4px;
   color: var(--text-dim);
   font-size: 11.5px;
-}
-
-.grow {
-  flex: 1;
-}
-
-.filters {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  padding: 10px 16px;
-  background: var(--panel);
-  border-bottom: 1px solid var(--border);
-}
-
-.filters .grow {
-  flex: 1;
-}
-
-.list-wrap {
-  flex: 1;
-  overflow: auto;
-}
-
-table.prs {
-  width: 100%;
-  border-collapse: collapse;
-}
-
-table.prs th,
-table.prs td {
-  text-align: left;
-  padding: 8px 16px;
-  border-bottom: 1px solid var(--border);
-  vertical-align: middle;
-}
-
-table.prs th {
-  position: sticky;
-  top: 0;
-  background: var(--panel);
-  color: var(--text-dim);
-  font-weight: 500;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  cursor: pointer;
-  user-select: none;
-}
-
-table.prs th .arrow {
-  color: var(--accent);
-  margin-left: 4px;
-}
-
-table.prs tbody tr {
-  transition: background-color 140ms ease;
-}
-
-table.prs tbody tr:hover {
-  background: var(--panel-2);
-}
-
-table.prs tbody tr:focus-visible,
-table.prs th:focus-visible {
-  outline: none;
-  background: var(--panel-2);
-  box-shadow: inset 0 0 0 2px var(--focus-ring);
 }
 
 /* Streamed rows fade in as they arrive (and on the skeleton -> real swap).
@@ -513,6 +797,274 @@ table.prs tbody tr.clickable {
   to {
     opacity: 1;
   }
+}
+
+/* ---- Filters bar ------------------------------------------------------- */
+.filters {
+  display: flex;
+  gap: var(--s-2);
+  align-items: center;
+  padding: var(--s-2) var(--s-4);
+  height: 44px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+.filters .grow {
+  flex: 1;
+}
+
+.list-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* ---- PR list table ---------------------------------------------------- */
+/* A proper data table: hairline rows, sticky header with backdrop, no zebra
+ * striping (single surface looks more like a list), strong focus state. The
+ * row is a button (cursor:pointer, role=button, focusable) — the focus ring
+ * is the inset 2px accent, not a side stripe. */
+table.prs {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+table.prs thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--panel);
+  color: var(--text-dim);
+  font-weight: 600;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  text-align: left;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  user-select: none;
+  -webkit-app-region: no-drag;
+  transition: color var(--t-fast) var(--ease);
+}
+
+table.prs thead th:hover {
+  color: var(--text);
+}
+
+table.prs thead th .sort-arrow {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 4px;
+  color: var(--accent);
+  vertical-align: middle;
+}
+
+table.prs tbody td {
+  padding: 9px 12px;
+  vertical-align: middle;
+  color: var(--text);
+  /* Two-layer hover: row paints panel-2, the cell itself paints panel-3 on
+   * top. The transition lives on the cell so the row's own background
+   * change (focus ring, sort highlight) and the cell's surface swap stay
+   * independent — the cell still feels "active" inside a focused row. */
+  transition: background-color var(--t-fast) var(--ease);
+}
+
+table.prs tbody tr {
+  transition: background-color var(--t-fast) var(--ease);
+  cursor: pointer;
+  box-shadow: inset 0 -1px 0 0 var(--border);
+}
+
+table.prs tbody tr:hover {
+  background: var(--panel-2);
+}
+
+/* Cell hover stacks on top of the row hover — one panel step darker so the
+ * specific column the pointer is on reads as "picked". Background-only,
+ * no extra border or shadow, so the cell stays quiet inside the row. */
+table.prs tbody td:hover {
+  background: var(--panel-3);
+}
+
+table.prs tbody tr:focus-visible,
+table.prs thead th:focus-visible {
+  outline: none;
+  background: var(--panel-2);
+  box-shadow: inset 0 0 0 2px var(--focus-ring);
+}
+
+table.prs tbody td:first-child {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Cell types — each column gets a clear role. Title is the only column that
+ * gets the leading icon + soft emphasis. */
+table.prs .cell-id {
+  width: 56px;
+  color: var(--text-dim);
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+table.prs .cell-title {
+  /* Title is a fixed-width column so the table layout is predictable across
+   * window sizes — the rest of the columns sum to a known width and the
+   * title absorbs the rest at a single chosen value. Long titles wrap
+   * inside the cell (see .pr-title-text) instead of being truncated; the
+   * row height grows to fit. The icon stays pinned to the top with
+   * align-items: flex-start so a 3-line title doesn't push the glyph into
+   * the middle of the text block. */
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 400px;
+  min-width: 0;
+}
+
+table.prs .pr-title-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r-1);
+  background: var(--panel-2);
+  color: var(--text-dim);
+}
+
+table.prs tr.clickable:hover .pr-title-icon {
+  color: var(--accent);
+  background: var(--accent-wash);
+}
+
+table.prs .pr-title-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  /* Wrap long PR titles across multiple lines inside the fixed-width title
+   * cell. overflow-wrap: anywhere also breaks inside long unbreakable tokens
+   * (URLs, commit hashes) so they don't blow the column out horizontally. */
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+table.prs .cell-author {
+  width: 140px;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+table.prs .cell-target {
+  width: 200px;
+  white-space: nowrap;
+}
+
+table.prs .cell-status,
+table.prs .cell-approval {
+  width: 110px;
+}
+
+table.prs .cell-updated {
+  width: 70px;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* ---- Context menu (right-click on PR list rows) ---------------------- */
+.context-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 180px;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.context-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 12px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--t-fast) var(--ease),
+              color var(--t-fast) var(--ease);
+}
+
+.context-menu-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: var(--text-dim);
+}
+
+.context-menu-item:hover .context-menu-icon {
+  color: var(--text);
+}
+
+.context-menu-label {
+  flex: 1;
+}
+
+.context-menu-item:hover {
+  background: var(--panel-2);
+}
+
+.context-menu-item:focus-visible {
+  outline: none;
+  background: var(--panel-2);
+  box-shadow: inset 0 0 0 2px var(--focus-ring);
+}
+
+.context-menu-item:disabled {
+  color: var(--text-dim);
+  cursor: not-allowed;
+}
+
+/* Post-action confirmation: the item that just ran shows its feedback
+ * label/icon in the accent color so the user sees the action succeeded.
+ * Sibling items go dim. The whole menu stays open briefly so the user
+ * registers the change before it auto-closes. */
+.context-menu-item.is-confirmed {
+  color: var(--ok);
+}
+
+.context-menu-item.is-confirmed .context-menu-icon {
+  color: var(--ok);
+}
+
+.context-menu.is-confirming .context-menu-item:not(.is-confirmed) {
+  opacity: 0.4;
 }
 
 /* ---- PR list skeleton (first page of a fresh stream) ----------------- */
@@ -536,12 +1088,6 @@ table.prs tbody tr.clickable {
   height: 15px;
 }
 
-.prs-skeleton .sk-dot {
-  width: 13px;
-  height: 13px;
-  border-radius: 50%;
-}
-
 @keyframes pr-skeleton-pulse {
   0%,
   100% {
@@ -557,48 +1103,106 @@ table.prs tbody tr.clickable {
   font-family: ui-monospace, 'SF Mono', Menlo, monospace;
 }
 
-.badge {
-  display: inline-block;
+/* ---- Pill (status badge) --------------------------------------------- */
+/* The single badge shape: a pill, an 11px label, a tinted background, a
+ * tinted border, and the role color for the text. No emoji, no decoration —
+ * the label is the affordance. One shape, many roles. */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   padding: 2px 8px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  line-height: 1.4;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.pill-open {
+  color: var(--ok);
+  background: rgba(74, 222, 128, 0.12);
+  border-color: rgba(74, 222, 128, 0.3);
+}
+.pill-closed {
+  color: var(--neutral);
+  background: rgba(148, 163, 184, 0.10);
+  border-color: rgba(148, 163, 184, 0.25);
+}
+.pill-merged {
+  color: var(--accent);
+  background: rgba(129, 140, 248, 0.12);
+  border-color: rgba(129, 140, 248, 0.3);
+}
+.pill-approved {
+  color: var(--ok);
+  background: rgba(74, 222, 128, 0.12);
+  border-color: rgba(74, 222, 128, 0.3);
+}
+.pill-not_approved {
+  color: var(--bad);
+  background: rgba(248, 113, 113, 0.10);
+  border-color: rgba(248, 113, 113, 0.28);
+}
+.pill-no_rules,
+.pill-unknown {
+  color: var(--text-dim);
+  background: var(--panel-2);
+  border-color: var(--border);
+}
+
+/* Legacy .badge class — kept as alias for code that still uses the old
+ * .badge.OPEN / .badge.CLOSED names (the PRDetail toolbar still does). */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  line-height: 1.4;
   border: 1px solid transparent;
 }
 
 .badge.OPEN {
-  background: rgba(var(--ok-rgb), 0.12);
   color: var(--ok);
-  border-color: rgba(var(--ok-rgb), 0.4);
+  background: rgba(74, 222, 128, 0.12);
+  border-color: rgba(74, 222, 128, 0.3);
 }
 
 .badge.CLOSED {
-  background: rgba(var(--neutral-rgb), 0.12);
   color: var(--neutral);
-  border-color: rgba(var(--neutral-rgb), 0.3);
+  background: rgba(148, 163, 184, 0.10);
+  border-color: rgba(148, 163, 184, 0.25);
 }
 
 .badge.MERGED {
-  background: rgba(var(--accent-rgb), 0.12);
   color: var(--accent);
-  border-color: rgba(var(--accent-rgb), 0.4);
+  background: rgba(129, 140, 248, 0.12);
+  border-color: rgba(129, 140, 248, 0.3);
 }
 
 .badge.APPROVED {
-  background: rgba(var(--ok-rgb), 0.12);
   color: var(--ok);
-  border-color: rgba(var(--ok-rgb), 0.4);
+  background: rgba(74, 222, 128, 0.12);
+  border-color: rgba(74, 222, 128, 0.3);
 }
 
 .badge.NOT_APPROVED {
-  background: rgba(var(--bad-rgb), 0.12);
   color: var(--bad);
-  border-color: rgba(var(--bad-rgb), 0.4);
+  background: rgba(248, 113, 113, 0.10);
+  border-color: rgba(248, 113, 113, 0.28);
 }
 
 .badge.NO_RULES,
 .badge.UNKNOWN {
-  background: rgba(var(--neutral-rgb), 0.1);
   color: var(--text-dim);
+  background: var(--panel-2);
   border-color: var(--border);
 }
 
@@ -893,55 +1497,61 @@ table.prs tbody tr.clickable {
 /* ErrorBanner: shared error UI rendered whenever an IPC call surfaces a
    ProviderError (AWS throttle, expired creds, access denied, etc.). The
    classified hint sits below the raw message so the user always sees a
-   next-action without having to interpret the AWS text. */
+   next-action without having to interpret the AWS text. No side-stripe
+ * border (banned by the brand); a tinted background + colored icon + colored
+ * title do the work. */
 .error {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   max-width: 720px;
   margin: 24px auto;
-  padding: 18px 20px;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--bad);
-  border-radius: 8px;
+  padding: 14px 16px;
+  background: rgba(248, 113, 113, 0.06);
+  border: 1px solid rgba(248, 113, 113, 0.28);
+  border-radius: var(--r-3);
   color: var(--text);
   text-align: left;
 }
 
-.error-title {
+.error-head {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-weight: 600;
-  font-size: 14px;
-  color: var(--bad);
-  margin-bottom: 8px;
 }
 
-.error-icon {
-  font-size: 16px;
-  line-height: 1;
+.error-head .error-icon {
+  flex: 0 0 auto;
+  color: var(--bad);
+  display: inline-flex;
+}
+
+.error-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--bad);
+  line-height: 1.3;
 }
 
 .error-message {
   color: var(--text);
   font-size: 13px;
-  line-height: 1.45;
+  line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
 }
 
 .error-hint {
-  margin-top: 10px;
   padding: 10px 12px;
-  background: var(--bg);
+  background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--r-2);
   color: var(--text-dim);
   font-size: 12.5px;
   line-height: 1.5;
 }
 
 .error-actions {
-  margin-top: 14px;
   display: flex;
   gap: 8px;
 }
@@ -1059,12 +1669,34 @@ table.prs tbody tr.clickable {
   flex-shrink: 0;
 }
 
-/* Subtle per-code accent so the type of failure registers at a glance. */
-.error.error-throttled { border-left-color: var(--warn, #d9a441); }
+/* Subtle per-code accent so the type of failure registers at a glance.
+ * Implemented as a tinted background rather than a side-stripe border. */
+.error.error-throttled {
+  background: rgba(251, 191, 36, 0.06);
+  border-color: rgba(251, 191, 36, 0.28);
+}
+.error.error-throttled .error-title,
+.error.error-throttled .error-head .error-icon { color: var(--warn); }
+
 .error.error-credentials_expired,
-.error.error-credentials_missing { border-left-color: var(--warn, #d9a441); }
+.error.error-credentials_missing {
+  background: rgba(251, 191, 36, 0.06);
+  border-color: rgba(251, 191, 36, 0.28);
+}
+.error.error-credentials_expired .error-title,
+.error.error-credentials_expired .error-head .error-icon,
+.error.error-credentials_missing .error-title,
+.error.error-credentials_missing .error-head .error-icon { color: var(--warn); }
+
 .error.error-network,
-.error.error-timeout { border-left-color: var(--text-dim); }
+.error.error-timeout {
+  background: var(--panel);
+  border-color: var(--border);
+}
+.error.error-network .error-title,
+.error.error-network .error-head .error-icon,
+.error.error-timeout .error-title,
+.error.error-timeout .error-head .error-icon { color: var(--text-dim); }
 
 /* ---- PR detail --------------------------------------------------------- */
 
@@ -1074,40 +1706,260 @@ table.prs tbody tr.clickable {
   height: 100%;
 }
 
+.pr-body {
+  display: flex;
+  flex-direction: row;
+  flex: 1;
+  min-height: 0;
+}
+
+/* Toolbar — the second-most-visible surface in the app. The redesign keeps
+ * 5 buttons inline (back, refresh, details, comments, overflow) + a primary
+ * merge button when applicable. Everything else lives behind ⋯. */
 .pr-toolbar {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 16px;
+  gap: var(--s-2);
+  padding: 0 var(--s-4);
+  height: 44px;
+  flex: 0 0 auto;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
   -webkit-app-region: drag;
 }
 
-.pr-toolbar .pr-title {
-  font-weight: 500;
-  margin-right: 6px;
+.pr-toolbar button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  -webkit-app-region: no-drag;
 }
 
-.pr-toolbar .pr-title .id {
+.pr-toolbar-title {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  flex: 0 1 auto;
+  -webkit-app-region: no-drag;
+}
+
+.pr-toolbar-title .id {
   color: var(--text-dim);
-  margin-right: 6px;
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 
-.pr-body {
+.pr-toolbar-title-text {
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 480px;
+}
+
+.pr-toolbar-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--ok);
+  font-size: 11.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(74, 222, 128, 0.1);
+  border: 1px solid rgba(74, 222, 128, 0.28);
+}
+
+.pr-toolbar .grow {
   flex: 1;
+}
+
+/* Overflow menu */
+.overflow-menu {
+  position: relative;
+  -webkit-app-region: no-drag;
+}
+
+.overflow-menu-popup {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 50;
+  min-width: 220px;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--r-3);
   display: flex;
+  flex-direction: column;
+  gap: 1px;
+  /* The menu is the only surface that earns a shadow on dark — it floats
+   * over busy content (the diff) and the shadow is what makes it read as
+   * detached. Light on macOS only, per the brand rule. */
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  /* Spring-style entry: 180ms scale + fade. */
+  animation: overflow-menu-in 140ms var(--ease) both;
+  transform-origin: top right;
+}
+
+@keyframes overflow-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.overflow-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 10px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-1);
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color var(--t-fast) var(--ease),
+    color var(--t-fast) var(--ease);
+  box-shadow: none;
   min-height: 0;
+}
+
+.overflow-item svg {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+}
+
+.overflow-item:hover:not(:disabled) {
+  background: var(--control-hover);
+}
+
+.overflow-item-danger:hover:not(:disabled) {
+  color: var(--bad);
+}
+.overflow-item-danger:hover:not(:disabled) svg {
+  color: var(--bad);
+}
+
+.overflow-item:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.overflow-sep {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
 }
 
 .file-sidebar {
   width: 320px;
   min-width: 220px;
+  max-width: 50vw;
   background: var(--panel);
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  transition: width 150ms ease, min-width 150ms ease, opacity 150ms ease,
+              border-color 150ms ease;
+}
+
+.file-sidebar.is-collapsed {
+  width: 0;
+  min-width: 0;
+  border-right-color: transparent;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Zero-width seam between the sidebar and the diff. It only carries the
+ * draggable resize sash (absolutely positioned, so the seam never steals
+ * layout width from the diff) and is rendered only while the sidebar is open.
+ * The collapse/expand toggle lives in the diff topbar, NOT here — floating it
+ * over the composited diff scroller made it lose clicks after a scroll. */
+.sidebar-edge {
+  position: relative;
+  flex-shrink: 0;
+  width: 0;
+  z-index: 5;
+  /* Own compositor layer: the sash straddles two composited scrollers (the
+   * file list on its left, the diff on its right). Without its own layer the
+   * compositor would drop pointer events on it once either side is scrolled —
+   * the same class of bug that drove the toggle out of this seam. */
+  transform: translateZ(0);
+}
+
+/* The draggable strip straddling the sidebar/diff border. On hover (or while
+ * dragging) it lights up to signal the col-resize affordance. */
+.sidebar-resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  width: 6px;
+  cursor: col-resize;
+  background: transparent;
+  transition: background 100ms ease;
+  z-index: 1;
+}
+
+.sidebar-resize-handle:hover,
+.sidebar-resize-handle.is-dragging {
+  background: var(--accent);
+}
+
+/* Slim bar pinned to the top of the diff column. Lives in normal flow (not
+ * floating over the scroller), so its controls stay clickable however far the
+ * diff is scrolled. Home for the file-list toggle. */
+.diff-topbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  height: 34px;
+  padding: 0 8px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+/* Show/hide the file list — a labelled icon button. aria-pressed (open) fills
+ * the panel glyph's left column so the single control reads its own state. */
+.diff-sidebar-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 12px;
+  cursor: pointer;
+  transition: color 100ms ease, background 100ms ease, border-color 100ms ease;
+}
+
+.diff-sidebar-toggle:hover {
+  color: var(--text);
+  background: var(--hover);
+  border-color: var(--border);
+}
+
+.diff-sidebar-toggle[aria-pressed='true'] {
+  color: var(--text);
 }
 
 .file-sidebar-head {
@@ -1306,6 +2158,7 @@ table.prs tbody tr.clickable {
   align-items: center;
   justify-content: space-between;
   margin-bottom: 10px;
+  gap: 8px;
 }
 
 .general-head h3 {
@@ -1314,6 +2167,26 @@ table.prs tbody tr.clickable {
   text-transform: uppercase;
   letter-spacing: 0.5px;
   color: var(--text-dim);
+}
+
+.general-head button {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-1);
+  cursor: pointer;
+}
+
+.general-head button:hover {
+  color: var(--text);
+  background: var(--panel-2);
+  border-color: var(--border);
 }
 
 .kbd-hint {
@@ -1394,28 +2267,39 @@ kbd {
   min-width: 80px;
 }
 
+/* Branch pill — used in PR list, PR metadata, branch picker, etc. Source
+ * branches lean indigo (the "from" color), destination branches lean green
+ * (the "to" color). The fill is a faint tint of the border, not a hard
+ * block — pills are too small to carry solid color. */
 .branch {
+  display: inline-flex;
+  align-items: center;
   background: var(--panel-2);
   border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 2px 8px;
+  border-radius: var(--r-1);
+  padding: 1px 7px;
   font-family: ui-monospace, 'SF Mono', Menlo, monospace;
   font-size: 11px;
   color: var(--text);
+  line-height: 1.5;
 }
 
 .branch.source {
-  border-color: rgba(var(--accent-rgb), 0.4);
+  border-color: rgba(129, 140, 248, 0.35);
   color: var(--accent);
+  background: rgba(129, 140, 248, 0.08);
 }
 
 .branch.dest {
-  border-color: rgba(var(--ok-rgb), 0.4);
+  border-color: rgba(74, 222, 128, 0.35);
   color: var(--ok);
+  background: rgba(74, 222, 128, 0.08);
 }
 
 .branch-arrow {
-  color: var(--text-dim);
+  color: var(--text-faint);
+  flex: 0 0 auto;
+  vertical-align: middle;
 }
 
 /* Compact, inline branch pair used in the PR list "Target" column. The
@@ -1426,58 +2310,27 @@ kbd {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  max-width: 280px;
+  max-width: 220px;
   vertical-align: middle;
   white-space: nowrap;
 }
 
 .branch-pair .branch {
-  max-width: 130px;
+  max-width: 100px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   display: inline-block;
 }
 
+.branch-pair .branch-arrow {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  display: inline-flex;
+}
+
 td.target-cell {
   white-space: nowrap;
-}
-
-/* Per-row external link button. Quiet by default, brightens on row hover so
- * it doesn't compete with the title but is still discoverable. Stops click
- * propagation so it doesn't trigger the row's "open in app" handler. */
-td.row-actions {
-  width: 28px;
-  text-align: right;
-  padding-right: 8px;
-}
-
-.row-external {
-  background: transparent;
-  border: none;
-  color: var(--text-dim);
-  padding: 2px 6px;
-  border-radius: 4px;
-  font-size: 13px;
-  line-height: 1;
-  cursor: pointer;
-  opacity: 0;
-  transition:
-    opacity 120ms ease,
-    background-color 120ms ease,
-    color 120ms ease;
-  box-shadow: none;
-}
-
-table.prs tr.clickable:hover .row-external,
-table.prs tr.clickable:focus-within .row-external,
-.row-external:focus-visible {
-  opacity: 1;
-}
-
-.row-external:hover {
-  background: rgba(var(--accent-rgb), 0.14);
-  color: var(--accent);
 }
 
 .commit-pair {
@@ -1499,10 +2352,37 @@ table.prs tr.clickable:focus-within .row-external,
 .who {
   background: var(--panel-2);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--r-1);
   padding: 2px 8px;
   font-family: ui-monospace, 'SF Mono', Menlo, monospace;
   font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.who-icon {
+  color: var(--text-dim);
+  flex: 0 0 auto;
+}
+
+.meta-sep {
+  display: inline-block;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  margin: 0 6px;
+  vertical-align: middle;
+}
+
+.self-approved {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--ok);
+  font-size: 11px;
+  margin-left: 4px;
 }
 
 .link {
@@ -1613,47 +2493,53 @@ table.prs tr.clickable:focus-within .row-external,
 
 .pr-approver-check {
   color: var(--ok);
-  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
 }
 
 .pr-approver-self {
-  background: rgba(var(--accent-rgb), 0.18);
+  background: var(--accent-wash);
   color: var(--accent);
   font-size: 10px;
   padding: 1px 5px;
-  border-radius: 3px;
+  border-radius: var(--r-1);
   text-transform: uppercase;
   letter-spacing: 0.4px;
+  font-weight: 600;
 }
 
 /* Reused tiny code chip for the merge commit id in the "Merged" row */
 .commit-pair-code {
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: var(--r-1);
   padding: 1px 5px;
   font-family: ui-monospace, 'SF Mono', Menlo, monospace;
   font-size: 11px;
   color: var(--text-dim);
 }
 
-/* "Open in AWS ↗" sits at the right edge of the Author row in the details
+/* "Open in AWS" sits at the right edge of the Author row in the details
  * panel. Sized like a quiet link, brightens on hover, no border so it stays
  * out of the grid of badges. */
 .pr-aws-link {
   text-decoration: none;
-  padding: 3px 8px;
-  border-radius: 4px;
+  padding: 4px 10px;
+  border-radius: var(--r-2);
   font-size: 12px;
   background: transparent;
   border: none;
   box-shadow: none;
   cursor: pointer;
+  color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
 }
 
 .pr-aws-link:hover {
-  background: rgba(var(--accent-rgb), 0.12);
-  text-decoration: underline;
+  background: var(--accent-wash);
+  color: var(--accent-strong);
 }
 
 .file-section {
@@ -1695,14 +2581,15 @@ table.prs tr.clickable:focus-within .row-external,
 }
 
 /* When pinned (top edge of section scrolled past the scroll container's top),
- * the header reads as an anchored bar: square top corners + a subtle
- * elevation shadow + a solid bottom border. We toggle the class from JS via
- * IntersectionObserver on a 1px sentinel above the section. */
+ * the header reads as an anchored bar: square top corners, slightly more
+ * contrast, solid bottom border. No drop shadow — the brand bans shadows on
+ * dark. The visual lift comes from the bolder bottom border + the
+ * background shift. */
 .file-section-head.is-pinned {
   border-top-left-radius: 0;
   border-top-right-radius: 0;
-  border-bottom-color: var(--border);
-  box-shadow: 0 6px 14px -8px rgba(0, 0, 0, 0.55);
+  border-bottom-color: var(--border-strong);
+  background: var(--panel-2);
 }
 
 /* 1px sentinel placed just above the header — we observe its intersection
@@ -1720,10 +2607,26 @@ table.prs tr.clickable:focus-within .row-external,
 }
 
 .file-collapse {
-  width: 24px;
-  padding: 2px 0;
+  width: 22px;
+  height: 22px;
+  padding: 0;
   font-size: 11px;
   line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+}
+
+.file-collapse:hover {
+  color: var(--text);
+  background: var(--panel-2);
+}
+
+.file-collapse-icon {
+  display: block;
+  color: var(--text-dim);
+  transform: translateX(-1px);
 }
 
 .file-section-body {
@@ -1778,7 +2681,14 @@ table.prs tr.clickable:focus-within .row-external,
 
 .drow {
   display: grid;
-  grid-template-columns: 52px 18px 1fr;
+  /* minmax(0, 1fr) (not plain 1fr) lets the content column shrink below its
+   * longest line's intrinsic width — without it a long unbroken line forces
+   * the grid wider than the diff area and soft-wrap never kicks in. */
+  grid-template-columns: 52px 18px minmax(0, 1fr);
+  /* Default `align-items: stretch` is intentional: the gutter/mark cells
+   * stretch to the wrapped row's full height so their diff-tint backgrounds
+   * read as one continuous band, while their text still flows from the top
+   * and lines up with the first visual line of content. */
   /* We intentionally do NOT set content-visibility on individual rows.
    * Per-row content-visibility forces the browser to maintain a paint
    * container for every one of (potentially) thousands of rows, and the
@@ -1818,8 +2728,13 @@ table.prs tr.clickable:focus-within .row-external,
 }
 
 .drow > .dcontent {
-  white-space: pre;
-  overflow-x: auto;
+  /* Soft-wrap long lines instead of scrolling each row horizontally, so the
+   * diff stays fully readable as the area narrows (sidebar resize/expand).
+   * `pre-wrap` keeps leading indentation; `overflow-wrap: anywhere` breaks
+   * very long unbroken tokens (URLs, minified lines) so they can't push the
+   * row wider than the diff area. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   color: var(--text);
 }
 
@@ -1864,7 +2779,9 @@ table.prs tr.clickable:focus-within .row-external,
   display: none;
   position: absolute;
   right: -10px;
-  top: 50%;
+  /* Pin to the first visual line (half a row down), not the cell's vertical
+   * centre — on a wrapped multi-line row, 50% would float it mid-row. */
+  top: 9px;
   transform: translateY(-50%);
   width: 18px;
   height: 18px;
@@ -2002,8 +2919,10 @@ table.prs tr.clickable:focus-within .row-external,
   border: 1px solid var(--border);
 }
 
-/* Native macOS button gradient looks out of place on the flat band. Strip
- * it for the edge + band buttons specifically. */
+/* macOS button gradient looks out of place on the flat band. Strip it for
+ * the edge + band buttons specifically. We no longer branch by platform —
+ * the button styles above don't use a gradient on dark, so this is just
+ * defensive normalization. */
 .platform-darwin[data-theme='dark'] .expand-edge,
 .platform-darwin[data-theme='dark'] .expand-band {
   background: transparent;
@@ -2013,7 +2932,7 @@ table.prs tr.clickable:focus-within .row-external,
 
 .platform-darwin[data-theme='dark'] .expand-edge:hover:not(:disabled),
 .platform-darwin[data-theme='dark'] .expand-band:hover:not(:disabled) {
-  background: rgba(var(--accent-rgb), 0.14);
+  background: rgba(129, 140, 248, 0.14);
   border-color: var(--border);
 }
 
@@ -2319,7 +3238,11 @@ table.prs tr.clickable {
 .sidebar-tab.is-active {
   color: var(--text);
   background: var(--panel);
-  box-shadow: inset 0 -2px 0 var(--accent);
+  /* No bottom-stripe accent (would read as a side-stripe variant). The
+   * active state is communicated by the panel background + bright text
+   * color alone. The hairline border below already separates this row
+   * from the next. */
+  font-weight: 600;
 }
 
 .sidebar-tab-count {
@@ -2540,8 +3463,10 @@ table.prs tr.clickable {
   color: var(--text);
 }
 
-/* Quote of the comment a reply is answering — one dimmed, italic line behind a
- * left rule so the "this answers that" relationship reads at a glance. */
+/* Quote of the comment a reply is answering — one dimmed, italic line. The
+ * "this answers that" relationship is communicated with a small indent and
+ * a quote glyph, not a left rule (left rules read as the brand-banned
+ * side-stripe). */
 .activity-quote {
   display: -webkit-box;
   -webkit-line-clamp: 1;
@@ -2551,10 +3476,21 @@ table.prs tr.clickable {
   word-break: break-word;
   color: var(--text-dim);
   font-style: italic;
-  border-left: 2px solid var(--border);
-  padding-left: 6px;
+  padding-left: 8px;
   margin: 1px 0;
   opacity: 0.85;
+  position: relative;
+}
+
+.activity-quote::before {
+  content: '“';
+  position: absolute;
+  left: 0;
+  top: 0;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--text-faint);
+  font-style: normal;
 }
 
 
@@ -2571,13 +3507,13 @@ table.prs tr.clickable {
 }
 
 .activity-item.is-navigable:hover {
-  background: rgba(var(--accent-rgb), 0.08);
+  background: var(--panel-2);
 }
 
 .activity-item.is-navigable:focus-visible {
   outline: none;
-  background: rgba(var(--accent-rgb), 0.1);
-  box-shadow: inset 2px 0 0 var(--accent);
+  background: var(--panel-2);
+  box-shadow: inset 0 0 0 2px var(--focus-ring);
 }
 
 /* Brief pulse on the thread the timeline jumped to, so the eye lands on it
@@ -2622,10 +3558,13 @@ table.prs tr.clickable {
   color: var(--text);
   min-height: 24px;
   padding: 2px 10px;
-  border-radius: 6px;
+  border-radius: var(--r-2);
   font-size: 12px;
   cursor: pointer;
   box-shadow: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
 }
 
 .commit-banner-back:hover:not(:disabled) {
@@ -2653,18 +3592,8 @@ table.prs tr.clickable {
   flex: 1;
 }
 
-.platform-darwin[data-theme='dark'] .file-sidebar-tabs {
-  background: rgba(16, 16, 22, 0.4);
-  -webkit-backdrop-filter: blur(26px) saturate(1.45);
-  backdrop-filter: blur(26px) saturate(1.45);
-  border-bottom-color: rgba(160, 176, 205, 0.1);
-}
-
-.platform-darwin[data-theme='dark'] .commit-banner {
-  background: rgba(18, 18, 26, 0.72);
-  -webkit-backdrop-filter: blur(22px) saturate(1.35);
-  backdrop-filter: blur(22px) saturate(1.35);
-}
+/* (No more macOS-vibrancy specifics on the sidebar tabs / commit banner —
+ * the platform-darwin block at the bottom of the file is now minimal.) */
 
 /* ---- Keyboard shortcut overlay -------------------------------------- */
 
@@ -2756,347 +3685,18 @@ table.prs tr.clickable {
   font-size: 12px;
 }
 
-/* ---- Platform polish -------------------------------------------------- */
+/* ---- Platform polish (minimal — consistent, not native) ------------- */
+/* revu doesn't try to look native to either OS. The app uses the same
+ * tokens on macOS, Windows, and Linux. The only platform-specific things
+ * we keep are the small layout offsets required by the OS chrome. */
 
-/* macOS layout adjustments that apply in BOTH themes — the traffic-light
- * inset and transparent root are layout, not theming. */
-.platform-darwin body,
-.platform-darwin #root {
-  background: transparent;
-}
-
+/* macOS: leave room for the traffic-light buttons in the title bar.
+ * titleBarStyle: 'hiddenInset' on the BrowserWindow. We don't add a
+ * custom macOS title bar — the OS owns the chrome. */
 .platform-darwin .topbar,
 .platform-darwin .pr-toolbar {
-  min-height: 48px;
-  padding-left: 86px;
-}
-
-.platform-darwin .topbar .brand {
-  letter-spacing: 0;
-}
-
-.platform-darwin[data-theme='dark'] {
-  --bg: #050505;
-  --panel: rgba(22, 22, 22, 0.78);
-  --panel-2: rgba(30, 30, 30, 0.82);
-  --border: rgba(142, 142, 142, 0.2);
-  --control: rgba(36, 36, 36, 0.72);
-  --control-hover: rgba(50, 50, 50, 0.78);
-  --control-active: rgba(22, 22, 22, 0.84);
-  --accent-fade: rgba(var(--accent-rgb), 0.22);
-  --focus-ring: rgba(var(--accent-rgb), 0.32);
-}
-
-/* macOS light vibrancy: same posture as dark, calibrated for a white surface.
- * Quieter than the dark version since light vibrancy reads as a tint rather
- * than depth. */
-.platform-darwin[data-theme='light'] {
-  --panel: rgba(246, 248, 250, 0.78);
-  --panel-2: rgba(234, 238, 242, 0.82);
-  --border: rgba(31, 35, 40, 0.16);
-  --control: rgba(246, 248, 250, 0.84);
-  --control-hover: rgba(234, 238, 242, 0.9);
-  --control-active: rgba(208, 215, 222, 0.92);
-}
-
-.platform-darwin[data-theme='light'] .app,
-.platform-darwin[data-theme='light'] .pr-detail {
-  background: rgba(255, 255, 255, 0.84);
-}
-
-.platform-darwin[data-theme='light'] .topbar,
-.platform-darwin[data-theme='light'] .pr-toolbar {
-  background: rgba(246, 248, 250, 0.68);
-  -webkit-backdrop-filter: blur(28px) saturate(1.4);
-  backdrop-filter: blur(28px) saturate(1.4);
-  border-bottom-color: rgba(31, 35, 40, 0.12);
-}
-
-.platform-darwin[data-theme='light'] .settings-panel,
-.platform-darwin[data-theme='light'] .filters,
-.platform-darwin[data-theme='light'] .pr-meta,
-.platform-darwin[data-theme='light'] .file-section-head,
-.platform-darwin[data-theme='light'] table.prs th {
-  background: rgba(246, 248, 250, 0.82);
-  -webkit-backdrop-filter: blur(22px) saturate(1.35);
-  backdrop-filter: blur(22px) saturate(1.35);
-}
-
-/* Floating popups (repo switcher, branch picker) sit over the busy PR list, so
- * they need a denser frosted backdrop than the bars — otherwise the list text
- * bleeds through the translucent --panel and the menu is hard to read. */
-.platform-darwin[data-theme='light'] .repo-switcher-popup,
-.platform-darwin[data-theme='light'] .branch-picker-popup {
-  background: rgba(248, 250, 252, 0.94);
-  -webkit-backdrop-filter: blur(34px) saturate(1.4);
-  backdrop-filter: blur(34px) saturate(1.4);
-}
-
-.platform-darwin[data-theme='light'] .file-sidebar {
-  background: rgba(246, 248, 250, 0.68);
-  -webkit-backdrop-filter: blur(34px) saturate(1.4);
-  backdrop-filter: blur(34px) saturate(1.4);
-  border-right-color: rgba(31, 35, 40, 0.12);
-}
-
-.platform-darwin[data-theme='light'] .file-section,
-.platform-darwin[data-theme='light'] .inline-composer,
-.platform-darwin[data-theme='light'] .inline-thread,
-.platform-darwin[data-theme='light'] .thread-flat,
-.platform-darwin[data-theme='light'] .reply-box,
-.platform-darwin[data-theme='light'] .composer {
-  box-shadow: 0 8px 22px rgba(31, 35, 40, 0.08);
-}
-
-.platform-darwin[data-theme='dark'] .app,
-.platform-darwin[data-theme='dark'] .pr-detail {
-  background: rgba(10, 10, 10, 0.88);
-}
-
-.platform-darwin[data-theme='dark'] .topbar,
-.platform-darwin[data-theme='dark'] .pr-toolbar {
-  background: rgba(14, 14, 14, 0.58);
-  -webkit-backdrop-filter: blur(28px) saturate(1.45);
-  backdrop-filter: blur(28px) saturate(1.45);
-  border-bottom-color: rgba(142, 142, 142, 0.14);
-}
-
-.platform-darwin[data-theme='dark'] .summary {
-  color: rgba(216, 216, 216, 0.62);
-}
-
-.platform-darwin[data-theme='dark'] .settings-panel,
-.platform-darwin[data-theme='dark'] .filters,
-.platform-darwin[data-theme='dark'] .pr-meta,
-.platform-darwin[data-theme='dark'] .file-section-head {
-  background: rgba(20, 20, 20, 0.72);
-  -webkit-backdrop-filter: blur(22px) saturate(1.35);
-  backdrop-filter: blur(22px) saturate(1.35);
-}
-
-/* Floating popups (repo switcher, branch picker) sit over the busy PR list, so
- * they need a denser frosted backdrop than the bars — otherwise the list text
- * bleeds through the translucent --panel and the menu is hard to read. */
-.platform-darwin[data-theme='dark'] .repo-switcher-popup,
-.platform-darwin[data-theme='dark'] .branch-picker-popup {
-  background: rgba(24, 24, 24, 0.95);
-  -webkit-backdrop-filter: blur(34px) saturate(1.4);
-  backdrop-filter: blur(34px) saturate(1.4);
-}
-
-.platform-darwin[data-theme='dark'] table.prs th {
-  background: rgba(20, 20, 20, 0.78);
-  -webkit-backdrop-filter: blur(22px) saturate(1.35);
-  backdrop-filter: blur(22px) saturate(1.35);
-}
-
-.platform-darwin[data-theme='dark'] table.prs tbody tr:hover {
-  background: rgba(255, 255, 255, 0.045);
-}
-
-.platform-darwin[data-theme='dark'] table.prs tbody tr:focus-visible,
-.platform-darwin[data-theme='dark'] table.prs th:focus-visible {
-  background: rgba(255, 255, 255, 0.08);
-  box-shadow: inset 0 0 0 2px var(--focus-ring);
-}
-
-.platform-darwin[data-theme='dark'] .file-sidebar {
-  background: rgba(16, 16, 16, 0.6);
-  -webkit-backdrop-filter: blur(34px) saturate(1.5);
-  backdrop-filter: blur(34px) saturate(1.5);
-  border-right-color: rgba(142, 142, 142, 0.14);
-}
-
-.platform-darwin[data-theme='dark'] .file-sidebar-head {
-  background: rgba(16, 16, 16, 0.4);
-  -webkit-backdrop-filter: blur(26px) saturate(1.45);
-  backdrop-filter: blur(26px) saturate(1.45);
-  border-bottom-color: rgba(142, 142, 142, 0.1);
-}
-
-.platform-darwin[data-theme='dark'] .seg {
-  background: rgba(8, 8, 8, 0.5);
-  border-color: rgba(142, 142, 142, 0.18);
-  border-radius: 8px;
-  padding: 2px;
-}
-
-.platform-darwin[data-theme='dark'] .seg-btn {
-  min-height: 24px;
-  background: transparent;
-  border-radius: 6px;
-  color: rgba(216, 216, 216, 0.62);
-  box-shadow: none;
-}
-
-.platform-darwin[data-theme='dark'] .seg-btn + .seg-btn {
-  border-left: none;
-}
-
-.platform-darwin[data-theme='dark'] .seg-btn:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.045);
-  border-color: transparent;
-}
-
-.platform-darwin[data-theme='dark'] .seg-btn.active {
-  background: rgba(255, 255, 255, 0.1);
-  color: var(--text);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.08),
-    0 1px 2px rgba(0, 0, 0, 0.2);
-}
-
-.platform-darwin[data-theme='dark'] button {
-  background:
-    linear-gradient(rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.012)),
-    var(--control);
-  border-color: rgba(142, 142, 142, 0.24);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.09),
-    0 1px 1px rgba(0, 0, 0, 0.2);
-}
-
-.platform-darwin[data-theme='dark'] button:hover:not(:disabled) {
-  background:
-    linear-gradient(rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.02)),
-    var(--control-hover);
-  border-color: rgba(var(--accent-rgb), 0.48);
-}
-
-.platform-darwin[data-theme='dark'] button.primary {
-  background:
-    linear-gradient(rgba(255, 255, 255, 0.2), rgba(255, 255, 255, 0.025)),
-    rgba(var(--accent-rgb), 0.94);
-  border-color: rgba(var(--accent-rgb), 0.56);
-}
-
-.platform-darwin[data-theme='dark'] input,
-.platform-darwin[data-theme='dark'] select,
-.platform-darwin[data-theme='dark'] textarea {
-  background: rgba(8, 8, 8, 0.46);
-  border-color: rgba(142, 142, 142, 0.22);
-  box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.22);
-}
-
-.platform-darwin[data-theme='dark'] input::placeholder,
-.platform-darwin[data-theme='dark'] textarea::placeholder {
-  color: rgba(216, 216, 216, 0.46);
-}
-
-.platform-darwin[data-theme='dark'] .badge,
-.platform-darwin[data-theme='dark'] .ct,
-.platform-darwin[data-theme='dark'] .badge-count {
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
-}
-
-.platform-darwin[data-theme='dark'] .file-sidebar li {
-  color: rgba(255, 255, 255, 0.86);
-}
-
-.platform-darwin[data-theme='dark'] .file-sidebar li:hover {
-  background: rgba(255, 255, 255, 0.06);
-}
-
-.platform-darwin[data-theme='dark'] .file-sidebar li.active {
-  background: rgba(var(--accent-rgb), 0.22);
-  border-color: rgba(var(--accent-rgb), 0.3);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.05),
-    0 1px 2px rgba(0, 0, 0, 0.16);
-}
-
-.platform-darwin[data-theme='dark'] .file-section,
-.platform-darwin[data-theme='dark'] .inline-composer,
-.platform-darwin[data-theme='dark'] .inline-thread,
-.platform-darwin[data-theme='dark'] .thread-flat,
-.platform-darwin[data-theme='dark'] .reply-box,
-.platform-darwin[data-theme='dark'] .composer {
-  border-color: rgba(142, 142, 142, 0.2);
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.32);
-}
-
-.platform-win32[data-theme='dark'] {
-  --control: #1f1f1f;
-  --control-hover: #2a2a2a;
-  --control-active: #151515;
-}
-
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .platform-darwin[data-theme='dark'] .topbar,
-  .platform-darwin[data-theme='dark'] .pr-toolbar,
-  .platform-darwin[data-theme='dark'] .settings-panel,
-  .platform-darwin[data-theme='dark'] .filters,
-  .platform-darwin[data-theme='dark'] .pr-meta,
-  .platform-darwin[data-theme='dark'] .file-sidebar,
-  .platform-darwin[data-theme='dark'] .file-sidebar-head,
-  .platform-darwin[data-theme='dark'] .file-section-head,
-  .platform-darwin[data-theme='dark'] table.prs th {
-    background: #181818;
-  }
-
-  .platform-darwin[data-theme='light'] .topbar,
-  .platform-darwin[data-theme='light'] .pr-toolbar,
-  .platform-darwin[data-theme='light'] .settings-panel,
-  .platform-darwin[data-theme='light'] .filters,
-  .platform-darwin[data-theme='light'] .pr-meta,
-  .platform-darwin[data-theme='light'] .file-sidebar,
-  .platform-darwin[data-theme='light'] .file-sidebar-head,
-  .platform-darwin[data-theme='light'] .file-section-head,
-  .platform-darwin[data-theme='light'] table.prs th {
-    background: #f6f8fa;
-  }
-}
-
-@media (prefers-reduced-transparency: reduce) {
-  .platform-darwin[data-theme='dark'] .app,
-  .platform-darwin[data-theme='dark'] .pr-detail,
-  .platform-darwin[data-theme='dark'] .topbar,
-  .platform-darwin[data-theme='dark'] .pr-toolbar,
-  .platform-darwin[data-theme='dark'] .settings-panel,
-  .platform-darwin[data-theme='dark'] .filters,
-  .platform-darwin[data-theme='dark'] .pr-meta,
-  .platform-darwin[data-theme='dark'] .file-sidebar,
-  .platform-darwin[data-theme='dark'] .file-sidebar-head,
-  .platform-darwin[data-theme='dark'] .file-section-head,
-  .platform-darwin[data-theme='dark'] table.prs th {
-    background: #181818;
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
-  }
-
-  .platform-darwin[data-theme='light'] .app,
-  .platform-darwin[data-theme='light'] .pr-detail,
-  .platform-darwin[data-theme='light'] .topbar,
-  .platform-darwin[data-theme='light'] .pr-toolbar,
-  .platform-darwin[data-theme='light'] .settings-panel,
-  .platform-darwin[data-theme='light'] .filters,
-  .platform-darwin[data-theme='light'] .pr-meta,
-  .platform-darwin[data-theme='light'] .file-sidebar,
-  .platform-darwin[data-theme='light'] .file-sidebar-head,
-  .platform-darwin[data-theme='light'] .file-section-head,
-  .platform-darwin[data-theme='light'] table.prs th {
-    background: #f6f8fa;
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
-  }
-
-  /* The macOS ambient card shadow only earns its keep when the surfaces it
-   * lifts are translucent. Once vibrancy is off, the same shadow on an opaque
-   * dark panel reads as the brand-banned "shadow on dark." Drop it. */
-  .platform-darwin[data-theme='dark'] .file-section,
-  .platform-darwin[data-theme='dark'] .inline-composer,
-  .platform-darwin[data-theme='dark'] .inline-thread,
-  .platform-darwin[data-theme='dark'] .thread-flat,
-  .platform-darwin[data-theme='dark'] .reply-box,
-  .platform-darwin[data-theme='dark'] .composer,
-  .platform-darwin[data-theme='light'] .file-section,
-  .platform-darwin[data-theme='light'] .inline-composer,
-  .platform-darwin[data-theme='light'] .inline-thread,
-  .platform-darwin[data-theme='light'] .thread-flat,
-  .platform-darwin[data-theme='light'] .reply-box,
-  .platform-darwin[data-theme='light'] .composer {
-    box-shadow: none;
-  }
+  padding-left: 76px;
+  -webkit-app-region: drag;
 }
 
 /* Honor prefers-reduced-motion. PRODUCT.md commits to this; DESIGN.md flags
@@ -3143,7 +3743,8 @@ table.prs tr.clickable {
   align-self: end;
   padding-bottom: 10px;
   color: var(--text-dim);
-  font-size: 18px;
+  display: inline-flex;
+  align-items: center;
 }
 .create-pr-title-label {
   /* Title row takes its own line below the source/dest row. */

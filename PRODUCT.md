@@ -10,7 +10,8 @@ Engineers stuck on AWS CodeCommit who have to review pull requests but don't wan
 to live in the CodeCommit web console to do it. Solo developers and small teams
 on AWS-native stacks where CodeCommit was chosen for IAM/VPC reasons rather than
 preference. They already live in a terminal and an editor; a desktop app that
-feels native to their OS is welcome, a heavy browser-shaped Electron app is not.
+is fast, focused, and consistent is welcome, a heavy browser-shaped Electron
+app is not.
 
 Context of use: actively reading a real PR diff, often large (10k–50k+ changed
 lines), tab-switching back and forth to write line-anchored comments and replies,
@@ -20,18 +21,19 @@ and is not learning git on the job.
 ## Product Purpose
 
 Make reviewing a CodeCommit PR feel as good as reviewing a PR on a tool that
-people actually like — local, fast, native, line-anchored comments that sync
+people actually like — local, fast, focused, line-anchored comments that sync
 back to CodeCommit. The provider seam exists because CodeCommit is in AWS
 maintenance mode; the day a reviewer's team moves to GitHub or GitLab, the UI
 shouldn't have to change.
 
 Success looks like: a 50k-line diff scrolls smoothly on a normal laptop; an
 engineer reaches for revu instead of the AWS Console for every review; opening
-the app feels like opening a native tool, not a web page in a chrome-less window.
+the app feels like opening a fast, focused tool — not a web page in a
+chrome-less window.
 
 ## Brand Personality
 
-Three words: **quiet · fast · native.**
+Three words: **quiet · fast · consistent.**
 
 Voice: terse, technical, no marketing tone. The reviewer knows what
 `beforeCommitId` is. Don't explain git. Don't explain PRs. Don't sell the
@@ -42,7 +44,7 @@ everything else. No exclamation marks. No emoji garnish in labels or copy. No
 "Welcome to revu!" anywhere.
 
 Emotional goal: the relief of being out of the CodeCommit web UI. The pleasure
-of a native app that respects the host OS.
+of a fast, consistent tool that looks the same on every machine.
 
 ## Anti-references
 
@@ -65,10 +67,12 @@ Four things this should not look or feel like:
 
 ## Design Principles
 
-1. **Native before novel.** Honor the host platform: macOS gets real vibrancy,
-   traffic-light spacing, refined typography; Windows gets clean opaque panels
-   and proper title-bar behavior. Don't invent custom chrome for its own sake.
-   The shell should feel like the OS, not like a third-party UI kit.
+1. **Consistent, not native.** revu looks the same on every OS: same tokens,
+   same shapes, same iconography. We don't fake macOS vibrancy on Windows or
+   invent Windows acrylic on macOS. The only platform-specific things we keep
+   are the small layout offsets the OS chrome requires (traffic-light padding
+   on macOS, native title bar elsewhere). Cross-platform consistency is the
+   brand — recognizable to the user, regardless of which machine they open.
 
 2. **The diff is the product.** Every other surface — PR list, settings,
    sidebar, comment composer — earns its space by being out of the way when

@@ -3,6 +3,7 @@ import type { CommentDraft, CommentThread, FileDiffEntry } from '@shared/types';
 import { ContinuousDiff } from './ContinuousDiff/ContinuousDiff';
 import type { DiffCallbacks, DiffContext } from './ContinuousDiff/types';
 import { syntheticDifferences } from '../syntheticDiff';
+import { ArrowLeft } from '../icons';
 
 // Dev-only performance harness. Renders the real ContinuousDiff against the
 // synthetic 50k-line fixture so huge-diff scroll/highlight performance can be
@@ -54,7 +55,10 @@ export function SyntheticDiffView({
   return (
     <div className="pr-detail">
       <div className="pr-toolbar">
-        <button onClick={onBack}>← Back</button>
+        <button onClick={onBack}>
+          <ArrowLeft size={12} />
+          Back
+        </button>
         <span className="pr-title">
           <span className="id">perf</span> Synthetic diff harness
         </span>

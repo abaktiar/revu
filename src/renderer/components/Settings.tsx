@@ -3,12 +3,18 @@ import {
   AWS_CODECOMMIT_REGIONS,
   type AppSettings,
   type AwsProfileInfo,
-  type CredentialSource,
-  type RepositorySummary,
-  type ThemePreference,
 } from '@shared/types';
-import { api, IpcError, unwrap } from '../api';
+import { api, unwrap } from '../api';
 import { maskKey, parseEnvBlock } from '../parseEnvBlock';
+import {
+  Check,
+  CheckCircle,
+  Key,
+  Monitor,
+  Moon,
+  Sun,
+  User,
+} from '../icons';
 
 interface Props {
   settings: AppSettings;
@@ -22,9 +28,6 @@ export function Settings({
   onCredentialsChanged,
 }: Props): JSX.Element {
   const [profiles, setProfiles] = useState<AwsProfileInfo[]>([]);
-  const [repos, setRepos] = useState<RepositorySummary[]>([]);
-  const [reposLoading, setReposLoading] = useState(false);
-  const [reposError, setReposError] = useState<{ message: string; hint?: string } | null>(null);
   const [profilesError, setProfilesError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -40,193 +43,110 @@ export function Settings({
     void onChange({ ...settings, [key]: value });
   }
 
-  async function refreshRepos(): Promise<void> {
-    setReposLoading(true);
-    setReposError(null);
-    try {
-      setRepos(await unwrap(api.repos.list()));
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      const hint =
-        err instanceof IpcError ? err.hint : undefined;
-      setReposError({ message, hint });
-      setRepos([]);
-    } finally {
-      setReposLoading(false);
-    }
-  }
-
-  const favSet = useMemo(
-    () => new Set(settings.favoriteRepos),
-    [settings.favoriteRepos],
-  );
-
-  function toggleFavorite(name: string): void {
-    if (!name) return;
-    const next = favSet.has(name)
-      ? settings.favoriteRepos.filter((n) => n !== name)
-      : [...settings.favoriteRepos, name];
-    update('favoriteRepos', next);
-  }
-
-  // Sort repos: favorites first (alpha), then the rest. Always include the
-  // currently-selected repo so the dropdown shows it even before a refresh.
-  const allRepoNames = useMemo(() => {
-    const names = new Set(repos.map((r) => r.name));
-    for (const f of settings.favoriteRepos) names.add(f);
-    if (settings.repositoryName) names.add(settings.repositoryName);
-    return [...names];
-  }, [repos, settings.favoriteRepos, settings.repositoryName]);
-
-  const favorites = allRepoNames
-    .filter((n) => favSet.has(n))
-    .sort((a, b) => a.localeCompare(b));
-  const others = allRepoNames
-    .filter((n) => !favSet.has(n))
-    .sort((a, b) => a.localeCompare(b));
-
   return (
     <div className="settings-panel">
-      <section className="row">
-        <h3>Appearance</h3>
-        <div className="seg">
-          {(['light', 'dark', 'system'] as ThemePreference[]).map((t) => (
-            <SegButton
-              key={t}
-              active={settings.themePreference === t}
-              onClick={() => update('themePreference', t)}
-            >
-              {t === 'light' ? 'Light' : t === 'dark' ? 'Dark' : 'System'}
-            </SegButton>
-          ))}
-        </div>
-      </section>
-
-      <section className="row">
-        <h3>Credentials</h3>
-        <div className="seg">
-          <SegButton
-            active={settings.credentialSource === 'profile'}
-            onClick={() => update('credentialSource', 'profile')}
-          >
-            AWS profile
-          </SegButton>
-          <SegButton
-            active={settings.credentialSource === 'keys'}
-            onClick={() => update('credentialSource', 'keys')}
-          >
-            Access keys (paste)
-          </SegButton>
-        </div>
-      </section>
-
-      {settings.credentialSource === 'profile' ? (
-        <section className="row">
-          <label>
-            Profile
-            <select
-              value={settings.profile ?? ''}
-              onChange={(e) =>
-                update(
-                  'profile',
-                  e.target.value === '' ? undefined : e.target.value,
-                )
-              }
-              title={profilesError ?? undefined}
-            >
-              <option value="">(default credential chain)</option>
-              {profiles.map((p) => (
-                <option key={p.name} value={p.name}>
-                  {p.name}
-                  {p.region ? ` · ${p.region}` : ''}
-                </option>
-              ))}
-            </select>
-          </label>
-          {profilesError && (
-            <span className="hint warn">{profilesError}</span>
-          )}
-        </section>
-      ) : (
-        <KeysPanel
-          hasKeys={settings.hasManualKeys}
-          onSaved={onCredentialsChanged}
-        />
-      )}
-
-      <section className="row">
-        <label>
-          Region
-          <select
-            value={settings.region ?? ''}
-            onChange={(e) => update('region', e.target.value || undefined)}
-          >
-            <option value="">(none)</option>
-            {AWS_CODECOMMIT_REGIONS.map((r) => (
-              <option key={r.id} value={r.id}>
-                {r.id} · {r.label}
-              </option>
-            ))}
-          </select>
-        </label>
-      </section>
-
-      <section className="row">
-        <label>
-          Repository
-          <select
-            value={settings.repositoryName ?? ''}
-            onChange={(e) =>
-              update('repositoryName', e.target.value || undefined)
-            }
-          >
-            <option value="">(none)</option>
-            {favorites.length > 0 && (
-              <optgroup label="★ Favorites">
-                {favorites.map((name) => (
-                  <option key={`fav-${name}`} value={name}>
-                    {name}
-                  </option>
-                ))}
-              </optgroup>
-            )}
-            {others.length > 0 && (
-              <optgroup label="All repositories">
-                {others.map((name) => (
-                  <option key={name} value={name}>
-                    {name}
-                  </option>
-                ))}
-              </optgroup>
-            )}
-          </select>
-        </label>
-        <button
-          onClick={() => toggleFavorite(settings.repositoryName ?? '')}
-          disabled={!settings.repositoryName}
-          title={
-            settings.repositoryName && favSet.has(settings.repositoryName)
-              ? 'Remove from favorites'
-              : 'Add to favorites'
-          }
-          className="star"
-        >
-          {settings.repositoryName && favSet.has(settings.repositoryName)
-            ? '★'
-            : '☆'}
-        </button>
-        <button onClick={() => void refreshRepos()} disabled={reposLoading}>
-          {reposLoading ? 'Loading…' : 'Refresh repos'}
-        </button>
-        {reposError && (
-          <div className="hint warn settings-inline-error">
-            <div>{reposError.message}</div>
-            {reposError.hint && (
-              <div className="settings-inline-error-hint">{reposError.hint}</div>
-            )}
+      <div className="settings-grid">
+        <section className="settings-section">
+          <header className="settings-section-head">
+            <h3>Appearance</h3>
+            <p>How revu looks on this machine.</p>
+          </header>
+          <div className="settings-section-body">
+            <div className="seg seg-icons" role="radiogroup" aria-label="Theme">
+              <SegButton
+                active={settings.themePreference === 'light'}
+                onClick={() => update('themePreference', 'light')}
+                icon={<Sun size={14} />}
+                label="Light"
+              />
+              <SegButton
+                active={settings.themePreference === 'dark'}
+                onClick={() => update('themePreference', 'dark')}
+                icon={<Moon size={14} />}
+                label="Dark"
+              />
+              <SegButton
+                active={settings.themePreference === 'system'}
+                onClick={() => update('themePreference', 'system')}
+                icon={<Monitor size={14} />}
+                label="System"
+              />
+            </div>
           </div>
-        )}
-      </section>
+        </section>
+
+        <section className="settings-section">
+          <header className="settings-section-head">
+            <h3>Credentials</h3>
+            <p>Authentication and target region.</p>
+          </header>
+          <div className="settings-section-body">
+            <div className="seg" role="radiogroup" aria-label="Credential source">
+              <SegButton
+                active={settings.credentialSource === 'profile'}
+                onClick={() => update('credentialSource', 'profile')}
+                icon={<User size={14} />}
+                label="AWS profile"
+              />
+              <SegButton
+                active={settings.credentialSource === 'keys'}
+                onClick={() => update('credentialSource', 'keys')}
+                icon={<Key size={14} />}
+                label="Access keys"
+              />
+            </div>
+            {settings.credentialSource === 'profile' ? (
+              <div className="settings-row">
+                <label className="settings-label">
+                  Profile
+                  <select
+                    value={settings.profile ?? ''}
+                    onChange={(e) =>
+                      update(
+                        'profile',
+                        e.target.value === '' ? undefined : e.target.value,
+                      )
+                    }
+                    title={profilesError ?? undefined}
+                  >
+                    <option value="">(default credential chain)</option>
+                    {profiles.map((p) => (
+                      <option key={p.name} value={p.name}>
+                        {p.name}
+                        {p.region ? ` · ${p.region}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {profilesError && (
+                  <span className="hint warn">{profilesError}</span>
+                )}
+              </div>
+            ) : (
+              <KeysPanel
+                hasKeys={settings.hasManualKeys}
+                onSaved={onCredentialsChanged}
+              />
+            )}
+            <div className="settings-row">
+              <label className="settings-label">
+                Region
+                <select
+                  value={settings.region ?? ''}
+                  onChange={(e) => update('region', e.target.value || undefined)}
+                >
+                  <option value="">(none)</option>
+                  {AWS_CODECOMMIT_REGIONS.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.id} · {r.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          </div>
+        </section>
+      </div>
     </div>
   );
 }
@@ -234,19 +154,24 @@ export function Settings({
 function SegButton({
   active,
   onClick,
-  children,
+  icon,
+  label,
 }: {
   active: boolean;
   onClick: () => void;
-  children: React.ReactNode;
+  icon: React.ReactNode;
+  label: string;
 }): JSX.Element {
   return (
     <button
       className={`seg-btn${active ? ' active' : ''}`}
       onClick={onClick}
       type="button"
+      role="radio"
+      aria-checked={active}
     >
-      {children}
+      {icon}
+      <span>{label}</span>
     </button>
   );
 }
@@ -296,8 +221,8 @@ function KeysPanel({
 
   if (hasKeys && !editing) {
     return (
-      <section className="row keys">
-        <span className="ok-dot">●</span>
+      <div className="settings-keys-saved">
+        <CheckCircle size={14} className="ok-icon" />
         <span>Access keys saved in OS keychain.</span>
         <span className="grow" />
         <button onClick={() => setEditing(true)} disabled={busy}>
@@ -307,12 +232,12 @@ function KeysPanel({
           Clear
         </button>
         {error && <span className="hint warn">{error}</span>}
-      </section>
+      </div>
     );
   }
 
   return (
-    <section className="keys-edit">
+    <div className="keys-edit">
       <div className="hint">
         Paste the {'"'}Option 1: Set AWS environment variables{'"'} block from
         the AWS access portal. The values are encrypted with your OS keychain
@@ -330,6 +255,7 @@ export AWS_SESSION_TOKEN="..."`}
       <div className="keys-actions">
         {parsed ? (
           <span className="hint ok">
+            <Check size={12} />
             Detected: <code>{maskKey(parsed.accessKeyId)}</code>
             {parsed.sessionToken ? ' (with session token)' : ''}
           </span>
@@ -356,6 +282,6 @@ export AWS_SESSION_TOKEN="..."`}
         </button>
       </div>
       {error && <div className="hint warn">{error}</div>}
-    </section>
+    </div>
   );
 }

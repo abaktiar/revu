@@ -7,6 +7,13 @@ import {
 } from 'react';
 import type { BranchSummary } from '@shared/types';
 import { api, unwrap } from '../api';
+import {
+  ChevronDown,
+  GitBranch,
+  RefreshCw,
+  Search,
+  Star,
+} from '../icons';
 
 interface Props {
   repositoryName: string;
@@ -263,7 +270,7 @@ export function BranchPicker({
               onToggleFavorite?.(b.name, !favorited);
             }}
           >
-            {favorited ? '★' : '☆'}
+            <Star size={13} filled={favorited} />
           </button>
         )}
       </div>
@@ -287,11 +294,12 @@ export function BranchPicker({
           setOpen((v) => !v);
         }}
       >
+        <GitBranch size={12} className="branch-picker-icon" aria-hidden />
         <span className="branch-picker-value">
           {value ?? placeholder}
         </span>
         <span className="branch-picker-caret" aria-hidden="true">
-          ▾
+          <ChevronDown size={12} />
         </span>
       </button>
       {open && (
@@ -302,6 +310,7 @@ export function BranchPicker({
           aria-label={ariaLabel}
         >
           <div className="branch-picker-search-row">
+            <Search size={14} className="search-icon" aria-hidden />
             <input
               ref={searchRef}
               type="search"
@@ -323,7 +332,7 @@ export function BranchPicker({
               title="Re-fetch the branch list from the server"
               aria-label="Refresh branch list"
             >
-              ↻
+              <RefreshCw size={14} />
             </button>
           </div>
           <div
