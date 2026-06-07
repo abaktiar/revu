@@ -190,6 +190,16 @@ export interface ReviewProvider {
     pullRequestId: string,
     action: ApprovalAction,
   ): Promise<PullRequestApprovalView>;
+  // Override (or revoke an override of) all approval rules on the PR. This is
+  // the admin escape hatch for merging a PR whose rules can't be satisfied
+  // (e.g. the only eligible approver is unavailable). Requires elevated IAM
+  // permission; a denied call surfaces as an access_denied error. Invalidates
+  // the same caches as updateApprovalState and returns the refreshed view.
+  overrideApprovalRules(
+    repositoryName: string,
+    pullRequestId: string,
+    override: boolean,
+  ): Promise<PullRequestApprovalView>;
 
   // Mergeability — which merge strategies (if any) are valid for the current
   // source/destination, or "already merged" / "has conflicts" with a reason.

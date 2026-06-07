@@ -99,6 +99,7 @@ export const IPC = {
   draftsDelete: 'drafts:delete',
   approvalGet: 'approval:get',
   approvalUpdate: 'approval:update',
+  approvalOverride: 'approval:override',
   mergeabilityGet: 'mergeability:get',
   reviewedList: 'reviewed:list',
   reviewedToggle: 'reviewed:toggle',
@@ -799,6 +800,29 @@ export function registerIpc(): void {
         const p = await getProvider();
         return ok(
           await p.updateApprovalState(repositoryName, pullRequestId, action),
+        );
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IPC.approvalOverride,
+    async (
+      _e,
+      repositoryName: string,
+      pullRequestId: string,
+      override: boolean,
+    ): Promise<IpcResult<PullRequestApprovalView>> => {
+      try {
+        const p = await getProvider();
+        return ok(
+          await p.overrideApprovalRules(
+            repositoryName,
+            pullRequestId,
+            override,
+          ),
         );
       } catch (err) {
         return fail(err);

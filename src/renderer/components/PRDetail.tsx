@@ -35,6 +35,7 @@ import { MergeDialog, EditPRDialog } from './PRDialogs';
 import { FileFinder } from './FileFinder';
 import type { SidebarTab } from './FileSidebar';
 import {
+  AlertTriangle,
   ArrowLeft,
   Check,
   CheckCircle,
@@ -626,6 +627,29 @@ export function PRDetail({ repositoryName, pullRequest, onBack }: Props): JSX.El
     }
   }, [repositoryName, pullRequest.id]);
 
+  // Admin escape hatch: override (or revoke an override of) the PR's approval
+  // rules. Mirrors applyApproval — refreshes the approval view, the detail (so
+  // the approval-state pill reflects the override), and mergeability.
+  const applyOverride = useCallback(
+    async (override: boolean): Promise<void> => {
+      setApprovalBusy(true);
+      try {
+        const next = await unwrap(
+          api.approval.override(repositoryName, pullRequest.id, override),
+        );
+        setApproval(next);
+        const fresh = await unwrap(api.prs.get(repositoryName, pullRequest.id));
+        setDetail(fresh);
+        await reloadMergeability();
+      } catch (err) {
+        setLoadError(err);
+      } finally {
+        setApprovalBusy(false);
+      }
+    },
+    [repositoryName, pullRequest.id, reloadMergeability],
+  );
+
   const doMerge = useCallback(
     async (strategy: MergeOptionId, commitMessage: string): Promise<void> => {
       setActionBusy('merge');
@@ -729,6 +753,8 @@ export function PRDetail({ repositoryName, pullRequest, onBack }: Props): JSX.El
     approvalBusy,
     onApprove: () => void applyApproval('APPROVE'),
     onRevoke: () => void applyApproval('REVOKE'),
+    onOverride: () => void applyOverride(true),
+    onRevokeOverride: () => void applyOverride(false),
     onBack,
     generalCount: generalComments.length,
     showGeneral,
@@ -966,6 +992,8 @@ function Toolbar({
   approvalBusy,
   onApprove,
   onRevoke,
+  onOverride,
+  onRevokeOverride,
   onBack,
   generalCount,
   showGeneral,
@@ -989,6 +1017,8 @@ function Toolbar({
   approvalBusy: boolean;
   onApprove: () => void;
   onRevoke: () => void;
+  onOverride: () => void;
+  onRevokeOverride: () => void;
   onBack: () => void;
   generalCount: number;
   showGeneral: boolean;
@@ -1012,8 +1042,14 @@ function Toolbar({
   const canClose = isOpen && !isMerged;
   const canReopen = detail?.status === 'CLOSED' && !isMerged;
   const busyAny = actionBusy !== null;
-  const approvedCount =
-    approval?.states.filter((s) => s.approvalState === 'APPROVE').length ?? 0;
+  const approvedCount = approval?.approvalsReceived ?? 0;
+  const requiredCount = approval?.approvalsRequired;
+  const rulesTotal = approval?.rules.length ?? 0;
+  const rulesMet = approval?.rulesSatisfied ?? 0;
+  // Override is offered when there are rules that aren't all met yet and the PR
+  // isn't already overridden; "Revoke override" replaces it once overridden.
+  const hasUnmetRules = rulesTotal > 0 && rulesMet < rulesTotal;
+  const overridden = approval?.overridden ?? false;
 
   // Status: a single inline pill summarizing the PR's lifecycle state. The
   // detailed view lives in PRMetadata; the toolbar pill is for at-a-glance
@@ -1043,10 +1079,21 @@ function Toolbar({
       </span>
       {statusKind && <Pill kind={statusKind} />}
       {approvalKind && <Pill kind={approvalKind} />}
-      {approval && approvedCount > 0 && (
-        <span className="pr-toolbar-count" title={`${approvedCount} approval${approvedCount === 1 ? '' : 's'}`}>
+      {approval && (approvedCount > 0 || requiredCount != null) && (
+        <span
+          className="pr-toolbar-count"
+          title={
+            requiredCount != null
+              ? `${approvedCount} of ${requiredCount} approvals`
+              : `${approvedCount} approval${approvedCount === 1 ? '' : 's'}`
+          }
+        >
           <Check size={12} />
-          <span>{approvedCount}</span>
+          <span>
+            {requiredCount != null
+              ? `${approvedCount}/${requiredCount}`
+              : approvedCount}
+          </span>
         </span>
       )}
       <span className="grow" />
@@ -1086,11 +1133,15 @@ function Toolbar({
         actionBusy={actionBusy}
         selfApproved={!!approval?.selfApproved}
         approvalBusy={approvalBusy}
+        canOverride={isOpen && hasUnmetRules && !overridden}
+        overridden={overridden}
         onEdit={onEdit}
         onClose={onClose}
         onReopen={onReopen}
         onApprove={onApprove}
         onRevoke={onRevoke}
+        onOverride={onOverride}
+        onRevokeOverride={onRevokeOverride}
         onOpenInAws={onOpenInAws}
         hasWebUrl={hasWebUrl}
       />
@@ -1142,11 +1193,15 @@ function OverflowMenu({
   actionBusy,
   selfApproved,
   approvalBusy,
+  canOverride,
+  overridden,
   onEdit,
   onClose,
   onReopen,
   onApprove,
   onRevoke,
+  onOverride,
+  onRevokeOverride,
   onOpenInAws,
   hasWebUrl,
 }: {
@@ -1157,11 +1212,15 @@ function OverflowMenu({
   actionBusy: null | 'merge' | 'status' | 'edit';
   selfApproved: boolean;
   approvalBusy: boolean;
+  canOverride: boolean;
+  overridden: boolean;
   onEdit: () => void;
   onClose: () => void;
   onReopen: () => void;
   onApprove: () => void;
   onRevoke: () => void;
+  onOverride: () => void;
+  onRevokeOverride: () => void;
   onOpenInAws: () => void;
   hasWebUrl: boolean;
 }): JSX.Element {
@@ -1187,7 +1246,15 @@ function OverflowMenu({
 
   // Don't render the trigger if every item would be hidden — keep the
   // toolbar clean when the PR is in a state with no overflow actions.
-  if (!canEdit && !canClose && !canReopen && !selfApproved && !hasWebUrl) {
+  if (
+    !canEdit &&
+    !canClose &&
+    !canReopen &&
+    !selfApproved &&
+    !canOverride &&
+    !overridden &&
+    !hasWebUrl
+  ) {
     return <></>;
   }
 
@@ -1243,6 +1310,36 @@ function OverflowMenu({
             >
               <CheckCircle size={14} />
               <span>{approvalBusy ? 'Approving…' : 'Approve'}</span>
+            </button>
+          )}
+          {canOverride && (
+            <button
+              className="overflow-item"
+              role="menuitem"
+              disabled={approvalBusy}
+              onClick={() => {
+                setOpen(false);
+                onOverride();
+              }}
+              title="Bypass the PR's approval rules so it can be merged (requires elevated permission)"
+            >
+              <AlertTriangle size={14} />
+              <span>{approvalBusy ? 'Working…' : 'Override approval rules'}</span>
+            </button>
+          )}
+          {overridden && (
+            <button
+              className="overflow-item"
+              role="menuitem"
+              disabled={approvalBusy}
+              onClick={() => {
+                setOpen(false);
+                onRevokeOverride();
+              }}
+              title="Re-enable the PR's approval rules"
+            >
+              <AlertTriangle size={14} />
+              <span>{approvalBusy ? 'Working…' : 'Revoke rule override'}</span>
             </button>
           )}
           {canClose && (

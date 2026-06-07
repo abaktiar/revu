@@ -14,6 +14,8 @@ import {
   GetMergeOptionsCommand,
   GetPullRequestApprovalStatesCommand,
   GetPullRequestCommand,
+  GetPullRequestOverrideStateCommand,
+  OverridePullRequestApprovalRulesCommand,
   MergePullRequestByFastForwardCommand,
   MergePullRequestBySquashCommand,
   MergePullRequestByThreeWayCommand,
@@ -41,6 +43,7 @@ import { fromIni, fromNodeProviderChain } from '@aws-sdk/credential-providers';
 import type {
   ActivityEvent,
   ApprovalAction,
+  ApprovalRule,
   ApprovalState,
   ApprovalStateEntry,
   BranchSummary,
@@ -1057,14 +1060,53 @@ export class CodeCommitProvider implements ReviewProvider {
       );
       if (cached) return cached;
     }
-    const [states, events] = await Promise.all([
+    // Only the rule-evaluation + override-state calls depend on there being
+    // rules at all. A PR with no approval rules can't be over/under-approved or
+    // overridden, so we skip those two API calls entirely in the common case.
+    const hasRules = (pr.approvalRules ?? []).length > 0;
+    const [states, events, evaluation, overrideState] = await Promise.all([
       this.fetchApprovalStates(pullRequestId, revisionId),
       this.fetchEventsSafe(pullRequestId, opts?.forceFresh),
+      hasRules
+        ? this.fetchApprovalEvaluation(pullRequestId, revisionId)
+        : Promise.resolve(null),
+      hasRules
+        ? this.fetchOverrideState(pullRequestId, revisionId)
+        : Promise.resolve(null),
     ]);
     const selfArn = await this.callerArn();
     const selfApproved = states.some(
       (s) => s.userArn === selfArn && s.approvalState === 'APPROVE',
     );
+
+    // Build the per-rule view from the PR's configured approval rules, marking
+    // each satisfied/not from the authoritative evaluation lists. We parse the
+    // rule content JSON for the approvals-needed count + pool members, but a
+    // malformed/unparseable rule still shows up by name (just without a count).
+    const satisfiedNames = new Set(evaluation?.approvalRulesSatisfied ?? []);
+    const rules: ApprovalRule[] = (pr.approvalRules ?? []).map((r) => {
+      const parsed = parseApprovalRuleContent(r.approvalRuleContent);
+      const name = r.approvalRuleName ?? '(unnamed rule)';
+      return {
+        id: r.approvalRuleId,
+        name,
+        numberOfApprovalsNeeded: parsed.numberOfApprovalsNeeded,
+        approvalPoolMembers: parsed.approvalPoolMembers,
+        satisfied: satisfiedNames.has(name),
+        templateName: r.originApprovalRuleTemplate?.approvalRuleTemplateName,
+      };
+    });
+    const approvalsReceived = states.filter(
+      (s) => s.approvalState === 'APPROVE',
+    ).length;
+    const neededCounts = rules
+      .map((r) => r.numberOfApprovalsNeeded)
+      .filter((n): n is number => typeof n === 'number');
+    const approvalsRequired =
+      neededCounts.length > 0 ? Math.max(...neededCounts) : undefined;
+    const rulesSatisfied = rules.filter((r) => r.satisfied).length;
+    const overridden =
+      overrideState?.overridden ?? evaluation?.overridden ?? false;
     // For each user, look up the most recent APPROVAL_STATE_CHANGED event
     // and attach its timestamp. Events come back newest-first per the AWS
     // docs; we just take the first match. If a user revoked and re-approved,
@@ -1089,6 +1131,12 @@ export class CodeCommitProvider implements ReviewProvider {
       states: enrichedStates,
       selfApproved,
       selfArn,
+      rules,
+      approvalsReceived,
+      approvalsRequired,
+      rulesSatisfied,
+      overridden,
+      overrider: overrideState?.overrider,
     };
     await putCached(NS.approval, aKey, view, LIMITS.approval);
     return view;
@@ -1394,6 +1442,90 @@ async getMergeability(
           !!a.userArn && (a.approvalState === 'APPROVE' || a.approvalState === 'REVOKE'),
       )
       .map((a) => ({ userArn: a.userArn, approvalState: a.approvalState }));
+  }
+
+  // Best-effort: which rules are satisfied vs not, and whether the PR is
+  // approved/overridden overall. Returns null if the evaluation can't be read
+  // (e.g. permission denied) so the approval panel still renders the per-rule
+  // names + counts, just without satisfied flags.
+  private async fetchApprovalEvaluation(
+    pullRequestId: string,
+    revisionId: string,
+  ): Promise<{
+    approved: boolean;
+    overridden: boolean;
+    approvalRulesSatisfied: string[];
+    approvalRulesNotSatisfied: string[];
+  } | null> {
+    try {
+      const input = { pullRequestId, revisionId };
+      const res = await this.cc(
+        'EvaluatePullRequestApprovalRules',
+        input,
+        (i) => this.client.send(new EvaluatePullRequestApprovalRulesCommand(i)),
+      );
+      const e = res.evaluation;
+      return {
+        approved: e?.approved ?? false,
+        overridden: e?.overridden ?? false,
+        approvalRulesSatisfied: e?.approvalRulesSatisfied ?? [],
+        approvalRulesNotSatisfied: e?.approvalRulesNotSatisfied ?? [],
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  // Best-effort: whether the rules have been overridden and by whom. The
+  // overrider ARN isn't on the evaluation result, so we ask the dedicated
+  // override-state API. Returns null on failure.
+  private async fetchOverrideState(
+    pullRequestId: string,
+    revisionId: string,
+  ): Promise<{ overridden: boolean; overrider?: string } | null> {
+    try {
+      const input = { pullRequestId, revisionId };
+      const res = await this.cc(
+        'GetPullRequestOverrideState',
+        input,
+        (i) => this.client.send(new GetPullRequestOverrideStateCommand(i)),
+      );
+      return { overridden: res.overridden ?? false, overrider: res.overrider };
+    } catch {
+      return null;
+    }
+  }
+
+  async overrideApprovalRules(
+    repositoryName: string,
+    pullRequestId: string,
+    override: boolean,
+  ): Promise<PullRequestApprovalView> {
+    const pr = await this.getRawPullRequest(pullRequestId);
+    const revisionId = nonEmpty(pr.revisionId);
+    if (!revisionId) {
+      throw new Error(
+        `Pull request ${pullRequestId} has no revisionId — cannot override approval rules.`,
+      );
+    }
+    const input = {
+      pullRequestId,
+      revisionId,
+      overrideStatus: (override ? 'OVERRIDE' : 'REVOKE') as 'OVERRIDE' | 'REVOKE',
+    };
+    await this.cc('OverridePullRequestApprovalRules', input, (i) =>
+      this.client.send(new OverridePullRequestApprovalRulesCommand(i)),
+    );
+    // Overriding the rules flips the PR's effective approval state, so the same
+    // caches an approve/revoke would dirty are stale here too.
+    await Promise.all([
+      invalidateCached(NS.approval, approvalKey(pullRequestId, revisionId)),
+      invalidateCached(NS.prDetail, prDetailKey(pullRequestId)),
+      invalidateNamespace(NS.prList),
+    ]);
+    return this.getApprovalView(repositoryName, pullRequestId, {
+      forceFresh: true,
+    });
   }
 
   // ---- Pull-request events ----------------------------------------------
@@ -1923,6 +2055,51 @@ function mapCommentGroup(
 
 function decodeUtf8(bytes: Uint8Array): string {
   return new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+}
+
+// CodeCommit stores each approval rule's requirement as a JSON document in
+// `approvalRuleContent`, e.g.
+//   {"Version":"2018-11-08","Statements":[
+//     {"Type":"Approvers","NumberOfApprovalsNeeded":2,
+//      "ApprovalPoolMembers":["arn:aws:sts::111:assumed-role/Dev/*"]}]}
+// We pull the approvals-needed count (summed across statements, which is how
+// CodeCommit aggregates a multi-statement rule) and the union of pool members.
+// Parsing is fully defensive: any malformed content yields an empty result so
+// the rule still renders by name.
+function parseApprovalRuleContent(content: string | undefined): {
+  numberOfApprovalsNeeded?: number;
+  approvalPoolMembers?: string[];
+} {
+  if (!content) return {};
+  try {
+    const doc = JSON.parse(content) as {
+      Statements?: Array<{
+        NumberOfApprovalsNeeded?: number;
+        ApprovalPoolMembers?: string[];
+      }>;
+    };
+    const statements = Array.isArray(doc.Statements) ? doc.Statements : [];
+    let needed = 0;
+    let sawCount = false;
+    const members: string[] = [];
+    for (const s of statements) {
+      if (typeof s.NumberOfApprovalsNeeded === 'number') {
+        needed += s.NumberOfApprovalsNeeded;
+        sawCount = true;
+      }
+      if (Array.isArray(s.ApprovalPoolMembers)) {
+        for (const m of s.ApprovalPoolMembers) {
+          if (typeof m === 'string') members.push(m);
+        }
+      }
+    }
+    return {
+      numberOfApprovalsNeeded: sawCount ? needed : undefined,
+      approvalPoolMembers: members.length > 0 ? members : undefined,
+    };
+  } catch {
+    return {};
+  }
 }
 
 // Error thrown by everything routed through `cc()` (and a few other provider

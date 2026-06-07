@@ -2508,6 +2508,104 @@ td.target-cell {
   font-weight: 600;
 }
 
+/* ---- Approval rules breakdown --------------------------------------- */
+
+.rules-met {
+  color: var(--ok);
+}
+
+.rules-pending {
+  color: var(--warn);
+}
+
+/* OVERRIDDEN pill in the status row — reuses the .pill shape, warn-colored
+ * because an override means the normal gate was bypassed. */
+.pill.overridden {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(var(--warn-rgb), 0.16);
+  border: 1px solid rgba(var(--warn-rgb), 0.4);
+  color: var(--warn);
+}
+
+.pr-rules-row {
+  align-items: flex-start;
+}
+
+.pr-rules {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  flex: 1 1 0;
+}
+
+.pr-rule {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px 3px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+}
+
+.pr-rule.is-met {
+  background: rgba(var(--ok-rgb), 0.1);
+  border-color: rgba(var(--ok-rgb), 0.32);
+}
+
+.pr-rule.is-pending {
+  background: rgba(var(--warn-rgb), 0.1);
+  border-color: rgba(var(--warn-rgb), 0.36);
+}
+
+.pr-rule-icon {
+  display: inline-flex;
+  align-items: center;
+}
+
+.pr-rule.is-met .pr-rule-icon {
+  color: var(--ok);
+}
+
+.pr-rule.is-pending .pr-rule-icon {
+  color: var(--warn);
+}
+
+.pr-rule-name {
+  font-weight: 600;
+  color: var(--text);
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pr-rule-count {
+  color: var(--text-dim);
+}
+
+.pr-rule-state {
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  font-weight: 600;
+  font-size: 10px;
+}
+
+.pr-rule.is-met .pr-rule-state {
+  color: var(--ok);
+}
+
+.pr-rule.is-pending .pr-rule-state {
+  color: var(--warn);
+}
+
 /* Reused tiny code chip for the merge commit id in the "Merged" row */
 .commit-pair-code {
   background: var(--bg);

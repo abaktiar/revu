@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type {
+  ApprovalRule,
   ApprovalStateEntry,
   PRDifferences,
   PullRequestApprovalView,
@@ -9,8 +10,10 @@ import type {
 } from '@shared/types';
 import { Markdown } from './Markdown';
 import {
+  AlertTriangle,
   ArrowRight,
   Check,
+  Clock,
   ExternalLink,
   GitMerge,
   User as UserIcon,
@@ -48,6 +51,11 @@ export function PRMetadata({
   const approvers = (approval?.states ?? []).filter(
     (s) => s.approvalState === 'APPROVE',
   );
+  const rules = approval?.rules ?? [];
+  const approvalsReceived = approval?.approvalsReceived ?? approvalCount;
+  const approvalsRequired = approval?.approvalsRequired;
+  const rulesSatisfied = approval?.rulesSatisfied ?? 0;
+  const overridden = approval?.overridden ?? false;
 
   const source = stripRefs(target?.sourceReference ?? detail.targets[0]?.sourceReference ?? '');
   const dest = stripRefs(
@@ -86,8 +94,31 @@ export function PRMetadata({
         <span className={`pill ${detail.approvalState.toLowerCase()}`}>
           {detail.approvalState.replace('_', ' ')}
         </span>
+        {overridden && (
+          <span
+            className="pill overridden"
+            title={
+              approval?.overrider
+                ? `Approval rules overridden by ${shortArn(approval.overrider)}`
+                : 'Approval rules have been overridden'
+            }
+          >
+            <AlertTriangle size={11} />
+            OVERRIDDEN
+          </span>
+        )}
         <span className="hint">
-          {approvalCount} approval{approvalCount === 1 ? '' : 's'}
+          {approvalsRequired != null
+            ? `${approvalsReceived} of ${approvalsRequired} approval${approvalsRequired === 1 ? '' : 's'}`
+            : `${approvalsReceived} approval${approvalsReceived === 1 ? '' : 's'}`}
+          {rules.length > 0 && (
+            <span className="meta-sep" />
+          )}
+          {rules.length > 0 && (
+            <span className={rulesSatisfied === rules.length ? 'rules-met' : 'rules-pending'}>
+              {rulesSatisfied} of {rules.length} rule{rules.length === 1 ? '' : 's'} met
+            </span>
+          )}
           {selfApproved && (
             <span className="self-approved">
               <Check size={11} /> you
@@ -198,6 +229,17 @@ export function PRMetadata({
         </div>
       )}
 
+      {rules.length > 0 && (
+        <div className="pr-meta-row pr-rules-row">
+          <span className="pr-meta-label">Rules</span>
+          <ul className="pr-rules">
+            {rules.map((r) => (
+              <RuleChip key={r.id ?? r.name} rule={r} />
+            ))}
+          </ul>
+        </div>
+      )}
+
       {approvers.length > 0 && (
         <div className="pr-meta-row pr-approvers-row">
           <span className="pr-meta-label">Approved by</span>
@@ -253,6 +295,33 @@ function ApproverChip({
           {fmtRel(entry.changedAt)}
         </span>
       )}
+    </li>
+  );
+}
+
+function RuleChip({ rule }: { rule: ApprovalRule }): JSX.Element {
+  const needed = rule.numberOfApprovalsNeeded;
+  const titleParts: string[] = [];
+  if (rule.templateName) titleParts.push(`From template: ${rule.templateName}`);
+  if (rule.approvalPoolMembers && rule.approvalPoolMembers.length > 0) {
+    titleParts.push(`Approval pool:\n  ${rule.approvalPoolMembers.join('\n  ')}`);
+  }
+  const title = titleParts.join('\n') || undefined;
+  return (
+    <li
+      className={`pr-rule ${rule.satisfied ? 'is-met' : 'is-pending'}`}
+      title={title}
+    >
+      <span className="pr-rule-icon" aria-hidden="true">
+        {rule.satisfied ? <Check size={12} /> : <Clock size={12} />}
+      </span>
+      <span className="pr-rule-name">{rule.name}</span>
+      {needed != null && (
+        <span className="pr-rule-count">
+          {needed} approval{needed === 1 ? '' : 's'}
+        </span>
+      )}
+      <span className="pr-rule-state">{rule.satisfied ? 'met' : 'pending'}</span>
     </li>
   );
 }

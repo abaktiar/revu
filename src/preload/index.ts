@@ -80,6 +80,7 @@ const CH = {
   draftsDelete: 'drafts:delete',
   approvalGet: 'approval:get',
   approvalUpdate: 'approval:update',
+  approvalOverride: 'approval:override',
   mergeabilityGet: 'mergeability:get',
   reviewedList: 'reviewed:list',
   reviewedToggle: 'reviewed:toggle',
@@ -336,6 +337,17 @@ const api = {
       action: ApprovalAction,
     ): Promise<IpcResult<PullRequestApprovalView>> =>
       ipcRenderer.invoke(CH.approvalUpdate, repositoryName, pullRequestId, action),
+    override: (
+      repositoryName: string,
+      pullRequestId: string,
+      override: boolean,
+    ): Promise<IpcResult<PullRequestApprovalView>> =>
+      ipcRenderer.invoke(
+        CH.approvalOverride,
+        repositoryName,
+        pullRequestId,
+        override,
+      ),
   },
   mergeability: {
     get: (

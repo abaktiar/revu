@@ -394,13 +394,64 @@ export interface ApprovalStateEntry {
   changedAt?: string;
 }
 
+// One configured approval rule on a PR. CodeCommit attaches these either
+// directly on the PR or via an approval-rule template; the content is a JSON
+// document we parse for the human-relevant bits (how many approvals it needs
+// and who's in the approval pool). Provider-agnostic so a future GitHub
+// "required reviewers" / GitLab "approval rules" mapping can reuse the shape.
+export interface ApprovalRule {
+  // Provider id when available (CodeCommit approvalRuleId). Display falls back
+  // to `name` everywhere; id is only used for stable React keys.
+  id?: string;
+  name: string;
+  // How many approvals this rule requires, parsed from the rule content's
+  // NumberOfApprovalsNeeded. undefined when the content can't be parsed (we
+  // never block the panel on a malformed rule — we just show the rule by name).
+  numberOfApprovalsNeeded?: number;
+  // Raw ARN / ARN-glob patterns from the rule's ApprovalPoolMembers, when
+  // present. Shown as a tooltip so a reviewer can see who counts toward it.
+  approvalPoolMembers?: string[];
+  // Whether this specific rule's requirement is currently met. Sourced from
+  // EvaluatePullRequestApprovalRules (the authoritative satisfied/not lists),
+  // not computed locally — CodeCommit's pool matching is non-trivial.
+  satisfied: boolean;
+  // Set when the rule originates from an approval-rule template rather than
+  // being created ad hoc on the PR.
+  templateName?: string;
+}
+
 export interface PullRequestApprovalView {
   revisionId: string;
   states: ApprovalStateEntry[];
   // Whether the *currently authenticated* user has APPROVE on this revision.
   selfApproved: boolean;
   selfArn?: string;
+  // ---- Approval-rule rollup (CodeCommit approval rules) ----------------
+  // Configured rules with their per-rule satisfied state. Empty array means
+  // the PR has no approval rules at all (anyone with merge permission can
+  // merge).
+  rules: ApprovalRule[];
+  // Distinct users who currently hold APPROVE on this revision. This is the
+  // "approved" half of the "X of Y approvals" summary.
+  approvalsReceived: number;
+  // The strictest single rule's NumberOfApprovalsNeeded — i.e. the largest
+  // threshold any one rule demands. Used as the "Y" in "X of Y approvals".
+  // undefined when no rule declares a count (or there are no rules).
+  approvalsRequired?: number;
+  // How many of `rules` are currently satisfied — drives the "N of M rules
+  // met" line and the pending badge.
+  rulesSatisfied: number;
+  // Whether an admin has overridden the approval rules for this PR, letting it
+  // merge without satisfying them. `overrider` is the ARN that did so, when
+  // resolvable.
+  overridden: boolean;
+  overrider?: string;
 }
+
+// Override (or revoke an override of) all approval rules on a PR. CodeCommit's
+// OverridePullRequestApprovalRules takes OVERRIDE / REVOKE; we model it as a
+// boolean at the provider seam.
+export type OverrideAction = 'OVERRIDE' | 'REVOKE';
 
 // ---- Mergeability -----------------------------------------------------
 
