@@ -8,7 +8,7 @@ import type {
 
 const CONTEXT_LINES = 3;
 
-interface Inputs {
+export interface ComputeFileDiffInput {
   path: string;
   beforePath?: string;
   afterPath?: string;
@@ -18,9 +18,11 @@ interface Inputs {
   beforeText: string | null; // null when the file didn't exist on that side
   afterText: string | null;
   binary: boolean;
+  // Collapse whitespace-only changes (the "hide whitespace" toggle).
+  ignoreWhitespace?: boolean;
 }
 
-export function computeFileDiff(input: Inputs): FileDiff {
+export function computeFileDiff(input: ComputeFileDiffInput): FileDiff {
   const oldText = input.beforeText ?? '';
   const newText = input.afterText ?? '';
   const oldTotalLines = countLines(oldText);
@@ -50,7 +52,7 @@ export function computeFileDiff(input: Inputs): FileDiff {
     newText,
     '',
     '',
-    { context: CONTEXT_LINES },
+    { context: CONTEXT_LINES, ignoreWhitespace: input.ignoreWhitespace },
   );
 
   const hunks: DiffHunk[] = patch.hunks.map(toRichHunk);

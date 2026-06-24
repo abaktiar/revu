@@ -43,6 +43,8 @@ export function SyntheticDiffView({
       onSaveDraft: NOOP_ASYNC,
       onDeleteDraft: NOOP_ASYNC,
       onDeleteComment: NOOP_ASYNC,
+      onReactToComment: () => {},
+      onResolveThread: NOOP_ASYNC,
       onToggleReviewed: (_file: FileDiffEntry, _next: boolean) => {},
     }),
     [],

@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import type { CommentNode, CommentThread } from '@shared/types';
 import { Markdown } from '../Markdown';
+import { CommentReactions } from '../CommentReactions';
+import {
+  threadResolution,
+  visibleComments,
+} from '../threadResolution';
 
 interface Props {
   thread: CommentThread;
@@ -11,6 +16,10 @@ interface Props {
   // when omitted, no Delete affordance is rendered.
   selfArn?: string;
   onDeleteComment?: (commentId: string) => Promise<void>;
+  // Emoji reactions: set/replace/remove the caller's reaction on a comment.
+  onReact?: (commentId: string, value: string) => void;
+  // Resolve / reopen the whole thread (team-shared via a marker reply).
+  onSetResolved?: (resolved: boolean) => Promise<void>;
 }
 
 export function InlineThread({
@@ -19,11 +28,22 @@ export function InlineThread({
   onReply,
   selfArn,
   onDeleteComment,
+  onReact,
+  onSetResolved,
 }: Props): JSX.Element {
   const [replying, setReplying] = useState(false);
   const [text, setText] = useState('');
   const [err, setErr] = useState<string | null>(null);
   const replyRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const resolution = threadResolution(thread);
+  const comments = visibleComments(thread);
+  // Resolved threads collapse their conversation to keep the diff tidy; the
+  // reviewer can expand it on demand. Reopening (or any open thread) shows it.
+  const [expanded, setExpanded] = useState(false);
+  const showComments = !resolution.resolved || expanded;
+
+  const [resolving, setResolving] = useState(false);
 
   useEffect(() => {
     if (replying) replyRef.current?.focus();
@@ -36,6 +56,9 @@ export function InlineThread({
       await onReply(text.trim());
       setText('');
       setReplying(false);
+      // Make sure the new reply is visible even on a resolved (collapsed)
+      // thread — otherwise it lands inside the hidden section and looks lost.
+      setExpanded(true);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     }
@@ -64,28 +87,87 @@ export function InlineThread({
     }
   }
 
+  async function handleSetResolved(resolved: boolean): Promise<void> {
+    if (!onSetResolved) return;
+    setResolving(true);
+    try {
+      await onSetResolved(resolved);
+      // After resolving, collapse; after reopening, keep it open.
+      setExpanded(!resolved ? true : false);
+    } finally {
+      setResolving(false);
+    }
+  }
+
   return (
-    <div className="inline-thread">
-      <ol className="thread-list">
-        {thread.comments.map((c) => (
-          <li key={c.id}>
-            <CommentLine
-              c={c}
-              canDelete={
-                !!selfArn &&
-                !!onDeleteComment &&
-                !c.deleted &&
-                c.authorArn === selfArn
-              }
-              deleting={deletingId === c.id}
-              onDelete={() => void handleDelete(c.id)}
-            />
-          </li>
-        ))}
-      </ol>
+    <div className={`inline-thread${resolution.resolved ? ' is-resolved' : ''}`}>
+      {resolution.resolved && (
+        <div className="thread-resolved-bar">
+          <span className="thread-resolved-check" aria-hidden>
+            ✓
+          </span>
+          <span className="thread-resolved-label">
+            Resolved
+            {resolution.by ? ` by ${shortArn(resolution.by)}` : ''}
+          </span>
+          {comments.length > 0 && (
+            <button
+              type="button"
+              className="thread-resolved-toggle"
+              onClick={() => setExpanded((v) => !v)}
+            >
+              {expanded
+                ? 'Hide conversation'
+                : `Show conversation (${comments.length})`}
+            </button>
+          )}
+          {onSetResolved && (
+            <button
+              type="button"
+              className="thread-reopen"
+              disabled={resolving}
+              onClick={() => void handleSetResolved(false)}
+            >
+              {resolving ? 'Reopening…' : 'Reopen'}
+            </button>
+          )}
+        </div>
+      )}
+
+      {showComments && (
+        <ol className="thread-list">
+          {comments.map((c) => (
+            <li key={c.id}>
+              <CommentLine
+                c={c}
+                canDelete={
+                  !!selfArn &&
+                  !!onDeleteComment &&
+                  !c.deleted &&
+                  c.authorArn === selfArn
+                }
+                deleting={deletingId === c.id}
+                onDelete={() => void handleDelete(c.id)}
+                onReact={onReact}
+              />
+            </li>
+          ))}
+        </ol>
+      )}
+
       {!replying ? (
         <div className="thread-actions">
           <button onClick={() => setReplying(true)}>Reply</button>
+          {onSetResolved && !resolution.resolved && (
+            <button
+              type="button"
+              className="thread-resolve"
+              disabled={resolving}
+              onClick={() => void handleSetResolved(true)}
+            >
+              {resolving ? 'Resolving…' : 'Resolve'}
+            </button>
+          )}
         </div>
       ) : (
         <div className="reply-box">
@@ -127,11 +209,13 @@ function CommentLine({
   canDelete,
   deleting,
   onDelete,
+  onReact,
 }: {
   c: CommentNode;
   canDelete: boolean;
   deleting: boolean;
   onDelete: () => void;
+  onReact?: (commentId: string, value: string) => void;
 }): JSX.Element {
   return (
     <div className={`comment${c.deleted ? ' deleted' : ''}`}>
@@ -157,6 +241,9 @@ function CommentLine({
       <div className="comment-body">
         {c.deleted ? <i>(deleted)</i> : <Markdown source={c.content} />}
       </div>
+      {!c.deleted && onReact && (
+        <CommentReactions comment={c} onReact={onReact} />
+      )}
     </div>
   );
 }

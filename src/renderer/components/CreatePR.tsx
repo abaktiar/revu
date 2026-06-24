@@ -293,6 +293,8 @@ export function CreatePR({
       onSaveDraft: noopAsync,
       onDeleteDraft: noopAsync,
       onDeleteComment: noopAsync,
+      onReactToComment: noop,
+      onResolveThread: noopAsync,
       onToggleReviewed: noop,
     }),
     [],

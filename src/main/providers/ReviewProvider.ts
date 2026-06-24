@@ -12,11 +12,13 @@ import type {
   FileContent,
   FileDiff,
   FileDiffEntry,
+  FileDiffOptions,
   FilePair,
   ListPRsFilter,
   MergePullRequestInput,
   PostCommentInput,
   PostReplyInput,
+  PutReactionInput,
   PRDifferences,
   PRStatus,
   ListSessionResult,
@@ -138,7 +140,7 @@ export interface ReviewProvider {
   getFileDiff(
     repositoryName: string,
     entry: FileDiffEntry,
-    opts?: ReadOptions,
+    opts?: FileDiffOptions,
   ): Promise<FileDiff>;
   // Returns a slice of one side's blob; used by the "expand context" buttons
   // between hunks.
@@ -157,6 +159,9 @@ export interface ReviewProvider {
   // children remain so threads don't collapse. Provider implementations
   // should refuse to delete comments not authored by the current user.
   deleteComment(input: DeleteCommentInput): Promise<CommentNode>;
+  // Add, change, or remove the caller's emoji reaction on a comment.
+  // reactionValue is the emoji to set, or 'none'/empty to remove it.
+  putCommentReaction(input: PutReactionInput): Promise<void>;
 
   // Commits unique to the PR (everything reachable from the source tip but
   // not from the merge base / destination). Returned newest-first. The

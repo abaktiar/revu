@@ -45,10 +45,22 @@ const AUTO_COLLAPSE_LINES = 500;
 // once you cross a few thousand rows.
 const SKIP_HIGHLIGHT_LINES = 1000;
 
-// Wait this long after a section becomes visible before deciding to load it.
-// Without a dwell time, a smooth scrollIntoView triggered by a sidebar click
-// briefly intersects every file in between, queueing fetches we don't want.
-const LOAD_DWELL_MS = 200;
+// Matches HunkView's ROW_HEIGHT_PX / HUNK_HEADER_PX. Used to estimate a loaded
+// file's body height so content-visibility's offscreen size guess is honest
+// (accurate scrollbar, no layout jump when scrolling past an unrendered file).
+const ROW_HEIGHT_PX = 18;
+const HUNK_HEADER_PX = 24;
+
+// Height reserved for a file whose diff hasn't loaded yet. Without this, an
+// unloaded `.file-section-body` under `content-visibility: auto` collapses to
+// ~0px while offscreen, so the whole document is artificially short until every
+// file has loaded. Navigating to a file low in the list then "barely moves"
+// (you scroll to near the top of a tiny document) and only lands once the files
+// above have streamed in — the root of the "had to click the file several
+// times" bug. A fixed, generous estimate keeps the document honestly tall from
+// the first paint so navigation lands right away; the real height replaces it
+// the moment the diff loads.
+const ESTIMATED_UNLOADED_BODY_PX = 480;
 
 interface Props {
   entry: FileDiffEntry;
@@ -68,6 +80,9 @@ interface Props {
   onCloseComposer: () => void;
   onVisibilityChange: (path: string, visible: boolean) => void;
   registerNode: (path: string, el: HTMLDivElement | null) => void;
+  // Reports this file's loaded diff up to ContinuousDiff so the in-diff find
+  // can search content that isn't currently painted.
+  registerDiff: (path: string, diff: FileDiff | null) => void;
 }
 
 function FileDiffSectionImpl({
@@ -84,6 +99,7 @@ function FileDiffSectionImpl({
   onCloseComposer,
   onVisibilityChange,
   registerNode,
+  registerDiff,
 }: Props): JSX.Element {
   const [diff, setDiff] = useState<FileDiff | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -107,55 +123,40 @@ function FileDiffSectionImpl({
     [entry.path, registerNode],
   );
 
-  // Keep a ref-mirror of hasLoaded so the observer callback can read the
-  // current value without re-running the effect (which would tear down and
-  // rebuild the IntersectionObserver on every load).
-  const hasLoadedRef = useRef(hasLoaded);
-  useEffect(() => {
-    hasLoadedRef.current = hasLoaded;
-  }, [hasLoaded]);
-
-  // One stable IntersectionObserver per section. Two jobs:
-  //   1. Report visibility to the parent (drives active-file tracking).
-  //   2. Trigger a load when the section dwells in view long enough — a brief
-  //      scroll-through (e.g. a smooth scrollIntoView passing dozens of files
-  //      on the way to a sidebar-clicked target) must NOT queue fetches we
-  //      don't actually want, or we drown the renderer in pointless work.
+  // One stable IntersectionObserver per section, reporting visibility to the
+  // parent (which drives active-file tracking in the sidebar). The diff is no
+  // longer loaded on dwell — every file is background-loaded on mount (see the
+  // eager-load effect below) so navigation always lands on a real body — so
+  // visibility is this observer's only job now. The 200px buffer matches the
+  // prior active-file feel (a file counts as active just before it enters).
   useEffect(() => {
     const el = sectionRef.current;
     if (!el) return;
-    let pendingLoad: ReturnType<typeof setTimeout> | null = null;
-    const cancelPending = (): void => {
-      if (pendingLoad !== null) {
-        clearTimeout(pendingLoad);
-        pendingLoad = null;
-      }
-    };
     const io = new IntersectionObserver(
       (entries) => {
-        const visible = entries.some((e) => e.isIntersecting);
-        onVisibilityChange(entry.path, visible);
-        if (visible) {
-          if (!hasLoadedRef.current && pendingLoad === null) {
-            pendingLoad = setTimeout(() => {
-              pendingLoad = null;
-              if (!hasLoadedRef.current) setHasLoaded(true);
-            }, LOAD_DWELL_MS);
-          }
-        } else {
-          cancelPending();
-        }
+        onVisibilityChange(entry.path, entries.some((e) => e.isIntersecting));
       },
-      // Smaller pre-fetch buffer — combined with the dwell timer, this means
-      // we only load files the user is actually looking at or stopping near.
       { rootMargin: '200px 0px 200px 0px' },
     );
     io.observe(el);
     return () => {
-      cancelPending();
       io.disconnect();
     };
   }, [entry.path, onVisibilityChange]);
+
+  // Background-load this file's diff shortly after mount. Every section mounts
+  // up front (ContinuousDiff renders one per file), so this loads the whole PR
+  // diff without a scroll: sidebar/finder/j-k navigation always lands on a real
+  // file body, and there's no per-file "scroll to load" wait. Paced by
+  // fileDiffSemaphore; an offscreen loaded file only builds cheap hunk
+  // placeholders (HunkView defers real rows + highlighting until a hunk nears
+  // the viewport), so DOM/CPU cost stays bounded even on big PRs. Large files
+  // still auto-collapse after load (see the fetch effect), keeping a single
+  // huge file opt-in.
+  useEffect(() => {
+    if (hasLoaded) return;
+    setHasLoaded(true);
+  }, [hasLoaded]);
 
   // Pin sentinel: a 1px element placed just above the section. While the
   // sentinel is visible, the header is resting at the top of its section.
@@ -196,7 +197,15 @@ function FileDiffSectionImpl({
     if (!hasLoaded || diff || error) return;
     let cancelled = false;
     fileDiffSemaphore
-      .acquire(() => loadFileDiff(ctx.repositoryName, entry))
+      .acquire(
+        () =>
+          loadFileDiff(ctx.repositoryName, entry, {
+            ignoreWhitespace: ctx.ignoreWhitespace,
+          }),
+        // Tag with the path so navigating to this file can hoist its still-
+        // queued fetch to the front (see ContinuousDiff.pinToTarget).
+        entry.path,
+      )
       .then((d) => {
         if (cancelled) return;
         setDiff(d);
@@ -212,7 +221,30 @@ function FileDiffSectionImpl({
     return () => {
       cancelled = true;
     };
-  }, [hasLoaded, diff, error, ctx.repositoryName, entry]);
+  }, [hasLoaded, diff, error, ctx.repositoryName, ctx.ignoreWhitespace, entry]);
+
+  // Toggling "hide whitespace" changes the computed hunks, so drop the loaded
+  // diff (and any expanded context) and let the fetch effect above re-run with
+  // the new setting. No-op on first mount (diff is already null).
+  const firstWsRef = useRef(true);
+  useEffect(() => {
+    if (firstWsRef.current) {
+      firstWsRef.current = false;
+      return;
+    }
+    setDiff(null);
+    setError(null);
+    setExtraHunks([]);
+    setCollapsed(false);
+    setAutoCollapsed(false);
+  }, [ctx.ignoreWhitespace]);
+
+  // Report this file's loaded diff (or null) up to ContinuousDiff for the
+  // in-diff find index; clear it on unmount.
+  useEffect(() => {
+    registerDiff(entry.path, diff);
+    return () => registerDiff(entry.path, null);
+  }, [entry.path, diff, registerDiff]);
 
   const threadIndex = useMemo(() => buildThreadIndex(threads), [threads]);
   const draftIndex = useMemo(() => buildDraftIndex(drafts), [drafts]);
@@ -227,6 +259,18 @@ function FileDiffSectionImpl({
     [renderDiff],
   );
   const totalLines = renderDiff ? totalDiffLines(renderDiff) : 0;
+  // Estimated rendered height of this file's body, used as the
+  // content-visibility intrinsic size so the browser's offscreen size guess
+  // matches reality (honest scrollbar; no jump when scrolling past a file whose
+  // rows haven't painted yet). Mirrors HunkView's placeholder math.
+  const bodyIntrinsicHeight = useMemo(() => {
+    if (!renderDiff) return null;
+    let h = 0;
+    for (const hk of renderDiff.hunks) {
+      h += HUNK_HEADER_PX + hk.lines.length * ROW_HEIGHT_PX;
+    }
+    return h;
+  }, [renderDiff]);
   // Warp-style per-file stats. Only computed once the diff has loaded (the
   // FileDiffEntry alone doesn't carry line counts). Until then the chip is
   // omitted from the header so we don't render a placeholder.
@@ -269,19 +313,23 @@ function FileDiffSectionImpl({
   }
 
   // Reveal driver: when this file is the target of a timeline "scroll to
-  // comment" click, force it loaded + expanded, then scroll the thread row into
-  // view and flash it. The effect re-runs as the file loads (renderDiff /
-  // allHunks change) and as it expands (collapsed flips) — including when the
-  // post-load auto-collapse fires — so it keeps retrying until the row exists.
-  // A hunk containing a thread always force-mounts (see HunkView), so once the
-  // file is loaded and open the row is guaranteed to be in the DOM.
+  // comment" click, force it loaded + expanded, then flash the thread row. The
+  // scrolling itself is owned by ContinuousDiff's pin loop (which keeps the row
+  // anchored as the file loads); this effect only does the state changes the pin
+  // loop can't — force-load, expand, and the flash. It re-runs as the file loads
+  // (renderDiff / allHunks change) and as it expands (collapsed flips) —
+  // including when the post-load auto-collapse fires — so it keeps retrying
+  // until the row exists. A hunk containing a thread always force-mounts (see
+  // HunkView), so once the file is loaded and open the row is in the DOM.
   useEffect(() => {
-    if (!reveal) return;
+    if (!reveal || reveal.threadId === null) return;
     setHasLoaded(true); // no-op once already loaded
+
+    // Force-expand so the row can render; wait for that render before flashing.
     if (collapsed) {
       setCollapsed(false);
       setAutoCollapsed(false);
-      return; // wait for the expanded render before searching for the row
+      return;
     }
     const root = sectionRef.current;
     if (!root) return;
@@ -289,13 +337,6 @@ function FileDiffSectionImpl({
       `[data-thread-id="${CSS.escape(reveal.threadId)}"]`,
     );
     if (!node) return; // not in the DOM yet; a later state change re-runs this
-    const reduced = window.matchMedia(
-      '(prefers-reduced-motion: reduce)',
-    ).matches;
-    node.scrollIntoView({
-      behavior: reduced ? 'auto' : 'smooth',
-      block: 'center',
-    });
     // Restart the flash even if the class is somehow still present.
     node.classList.remove('thread-flash');
     void node.offsetWidth; // force reflow so the animation replays
@@ -385,7 +426,21 @@ function FileDiffSectionImpl({
         )}
       </header>
       {!collapsed && (
-        <div className="file-section-body">
+        <div
+          className="file-section-body"
+          style={{
+            // Loaded: the exact measured height, with `auto` so the browser
+            // remembers the real rendered size once painted. Unloaded: a fixed
+            // estimate (NO `auto` — `auto` would latch onto the tiny "Loading
+            // diff…" placeholder once it rendered and re-collapse the section).
+            // This keeps offscreen files from collapsing to ~0px, so scroll
+            // offsets are honest before the diff streams in.
+            containIntrinsicSize:
+              bodyIntrinsicHeight != null
+                ? `auto ${bodyIntrinsicHeight}px`
+                : `${ESTIMATED_UNLOADED_BODY_PX}px`,
+          }}
+        >
           {error ? (
             <div className="error">
               <pre>{error}</pre>

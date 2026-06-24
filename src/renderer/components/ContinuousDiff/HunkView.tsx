@@ -132,18 +132,23 @@ function HunkViewImpl({
     return hunk.lines.map((l) => highlightLine(l.content, language));
   }, [hunk, language, mustMount]);
 
+  // Mark real (non-expansion) hunks so the diff's keyboard nav (]/[) can jump
+  // between changes even while a hunk is still a height-reserved placeholder.
+  const changeHunkAttr = hunk.isExpansion ? undefined : 'true';
+
   if (!mustMount) {
     return (
       <div
         ref={wrapRef}
         className="hunk-wrap hunk-placeholder"
         style={{ height: placeholderHeight }}
+        data-change-hunk={changeHunkAttr}
       />
     );
   }
 
   return (
-    <div ref={wrapRef} className="hunk-wrap">
+    <div ref={wrapRef} className="hunk-wrap" data-change-hunk={changeHunkAttr}>
       {!hunk.isExpansion && (
         <div className="hunk-header">
           @@ -{hunk.oldStart},{hunk.oldLines} +{hunk.newStart},{hunk.newLines} @@
@@ -296,6 +301,10 @@ function ThreadRow({
           onReply={(content) => callbacks.onPostReply(thread.threadId, content)}
           selfArn={ctx.selfArn}
           onDeleteComment={callbacks.onDeleteComment}
+          onReact={callbacks.onReactToComment}
+          onSetResolved={(resolved) =>
+            callbacks.onResolveThread(thread.threadId, resolved)
+          }
         />
       </div>
     </div>

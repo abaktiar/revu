@@ -27,6 +27,12 @@ export interface DiffCallbacks {
   // Soft-delete a posted CodeCommit comment. The renderer is responsible for
   // confirming the action with the user; the provider enforces author-only.
   onDeleteComment: (commentId: string) => Promise<void>;
+  // Set/replace/remove the caller's emoji reaction on a comment. `value` is the
+  // emoji to set, or 'none' to clear it.
+  onReactToComment: (commentId: string, value: string) => void;
+  // Mark a line-anchored thread resolved (true) or reopened (false). Backed by
+  // a marker reply so the state is shared with the whole team.
+  onResolveThread: (threadId: string, resolved: boolean) => Promise<void>;
   onToggleReviewed: (file: FileDiffEntry, next: boolean) => void;
 }
 
@@ -45,17 +51,33 @@ export interface DiffContext {
   // against the wrong commits. The diff still renders normally; we just hide
   // the "+" hover button, threads, composer, and the reviewed checkbox.
   readOnly?: boolean;
+  // When true, file diffs are (re)fetched ignoring whitespace-only changes —
+  // the diff topbar's "hide whitespace" toggle.
+  ignoreWhitespace?: boolean;
 }
 
-// A request to bring a specific comment thread into view. Created by
-// ContinuousDiff.scrollToComment(), delivered to the one FileDiffSection whose
-// path matches, which force-loads + expands the file and scrolls to the thread.
+// A request to bring part of a file into view. Created by
+// ContinuousDiff.scrollToComment() / scrollToFile(), delivered to the one
+// FileDiffSection whose path matches, which force-loads the file (jumping the
+// diff-load queue) and then scrolls.
+//   - threadId set  → reveal that comment thread: force-expand the file and
+//     scroll to + flash the thread row.
+//   - threadId null → navigate to the file: keep the auto-collapse valve and
+//     scroll to the file header, re-correcting as the body loads so a click
+//     before the diff mounted still lands.
 export interface RevealTarget {
   filePath: string;
-  threadId: string;
-  // Bumped on every scrollToComment call so re-selecting the same thread
-  // re-triggers the reveal even when filePath + threadId are unchanged.
+  threadId: string | null;
+  // Bumped on every reveal call so re-selecting the same target re-triggers
+  // the reveal even when filePath + threadId are unchanged.
   nonce: number;
+}
+
+// A file that contains the in-diff find query, with how many lines match.
+// Drives the find bar's "N matches in M files" + file-to-file navigation.
+export interface DiffSearchMatch {
+  path: string;
+  count: number;
 }
 
 export interface FileSectionApi {
