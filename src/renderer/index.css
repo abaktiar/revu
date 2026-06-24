@@ -630,6 +630,136 @@ table.prs tr.clickable {
   -webkit-app-region: no-drag;
 }
 
+/* The approval-checklist section spans the full settings grid — its rows need
+ * the width. */
+.settings-section-wide {
+  grid-column: 1 / -1;
+}
+
+/* ---- Approval checklist editor (Settings) ---------------------------- */
+.checklist-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+.checklist-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.checklist-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.checklist-reorder {
+  display: inline-flex;
+  flex-direction: column;
+}
+
+.checklist-reorder .ghost.icon {
+  height: 16px;
+  width: 18px;
+  padding: 0;
+}
+
+.checklist-item-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 13px;
+}
+
+.checklist-required {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.checklist-remove {
+  color: var(--text-dim);
+}
+
+.checklist-remove:hover {
+  color: var(--bad);
+}
+
+.checklist-editor-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.checklist-editor-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* ---- Approve-checklist modal ----------------------------------------- */
+.approve-checklist {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.approve-checklist-item label {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.approve-checklist-item input {
+  margin-top: 2px;
+}
+
+.approve-checklist-text {
+  flex: 1 1 auto;
+}
+
+.approve-required-tag {
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-wash);
+  padding: 1px 5px;
+  border-radius: var(--r-1);
+  white-space: nowrap;
+}
+
+.approve-checklist-warn {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--text);
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: 6px;
+  padding: 6px 10px;
+}
+
 .settings-label-grow {
   flex: 1 1 240px;
   min-width: 0;
@@ -1962,6 +2092,100 @@ table.prs .cell-updated {
   color: var(--text);
 }
 
+/* "Hide whitespace" toggle in the diff topbar. Mirrors the sidebar toggle;
+ * the active state tints with the accent so it reads as "on". */
+.diff-ws-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 12px;
+  cursor: pointer;
+  transition: color 100ms ease, background 100ms ease, border-color 100ms ease;
+}
+
+.diff-ws-toggle:hover {
+  color: var(--text);
+  background: var(--hover);
+  border-color: var(--border);
+}
+
+.diff-ws-toggle.is-active {
+  color: var(--accent);
+  background: var(--accent-wash);
+  border-color: var(--accent);
+}
+
+/* In-diff find bar — a thin row under the diff topbar. */
+.diff-find {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  padding: 6px 8px;
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.diff-find-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 360px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 9px;
+  font-size: 13px;
+}
+
+.diff-find-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.diff-find-count {
+  font-size: 11.5px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Source-updated notice above the diff when reviewed marks were reset. */
+.stale-reviewed-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 12px 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  color: var(--text);
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.stale-reviewed-banner button {
+  margin-left: auto;
+  flex: 0 0 auto;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-dim);
+  font-size: 11.5px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+
+.stale-reviewed-banner button:hover {
+  color: var(--text);
+  border-color: var(--border-strong, var(--border));
+}
+
 .file-sidebar-head {
   padding: 10px;
   display: flex;
@@ -2506,6 +2730,103 @@ td.target-cell {
   text-transform: uppercase;
   letter-spacing: 0.4px;
   font-weight: 600;
+}
+
+/* Approval rules — one chip per rule, mirroring the approver chips. A met rule
+ * (satisfied or overridden) tints green; an unmet one stays neutral with a
+ * hollow dot, so a glance reads "what still needs approving." */
+.pr-rules-row {
+  align-items: flex-start;
+}
+
+.pr-rules {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  flex: 1 1 0;
+}
+
+.pr-rule {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.pr-rule.is-met {
+  background: rgba(var(--ok-rgb), 0.1);
+  border-color: rgba(var(--ok-rgb), 0.32);
+}
+
+.pr-rule-check {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-dim);
+}
+
+.pr-rule.is-met .pr-rule-check {
+  color: var(--ok);
+}
+
+.pr-rule-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  border: 1.5px solid var(--text-dim);
+  display: inline-block;
+}
+
+.pr-rule-name {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.pr-rule-count {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.pr-rule-template {
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-wash);
+  padding: 1px 5px;
+  border-radius: var(--r-1);
+}
+
+.pr-rule-overridden {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  font-weight: 600;
+  color: var(--text-dim);
+  border: 1px dashed var(--border-strong, var(--border));
+  padding: 2px 6px;
+  border-radius: 999px;
+  align-self: center;
+}
+
+/* Required-approvals chip in the PR-list Approval column. */
+.approval-req {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 6px;
+  font-size: 10.5px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  vertical-align: middle;
 }
 
 /* Reused tiny code chip for the merge commit id in the "Merged" row */
@@ -3139,6 +3460,178 @@ td.target-cell {
 .thread-actions {
   display: flex;
   justify-content: flex-end;
+  gap: 8px;
+}
+
+/* When a thread offers both Reply and Resolve, split them to opposite ends. */
+.thread-actions:has(.thread-resolve) {
+  justify-content: space-between;
+}
+
+.thread-resolve {
+  color: var(--ok);
+}
+
+/* ---- Emoji reactions ------------------------------------------------- */
+.comment-reactions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  margin-top: 6px;
+}
+
+.reaction-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  height: 22px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 11.5px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.reaction-pill:hover {
+  border-color: var(--border-strong, var(--border));
+}
+
+.reaction-pill.is-mine {
+  background: var(--accent-wash);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.reaction-emoji {
+  font-size: 12.5px;
+  line-height: 1;
+}
+
+.reaction-count {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.reaction-add-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.reaction-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.comment:hover .reaction-add,
+.reaction-add[aria-expanded='true'] {
+  opacity: 1;
+}
+
+.reaction-add:hover {
+  color: var(--text);
+  border-color: var(--border-strong, var(--border));
+}
+
+.reaction-add-plus {
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.reaction-picker {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  display: flex;
+  gap: 2px;
+  padding: 4px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong, var(--border));
+  background: var(--panel);
+}
+
+.reaction-choice {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  line-height: 1;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.reaction-choice:hover {
+  background: var(--panel-2);
+}
+
+.reaction-choice.is-mine {
+  border-color: var(--accent);
+  background: var(--accent-wash);
+}
+
+/* ---- Resolved threads ------------------------------------------------ */
+.inline-thread.is-resolved {
+  border-color: rgba(var(--ok-rgb), 0.4);
+}
+
+.thread-resolved-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  background: rgba(var(--ok-rgb), 0.1);
+  font-size: 12px;
+}
+
+.thread-resolved-check {
+  color: var(--ok);
+  font-weight: 700;
+}
+
+.thread-resolved-label {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.thread-resolved-toggle,
+.thread-reopen {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-size: 11.5px;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.thread-resolved-toggle:hover,
+.thread-reopen:hover {
+  color: var(--text);
+}
+
+.thread-reopen {
+  margin-left: auto;
 }
 
 .reply-box,

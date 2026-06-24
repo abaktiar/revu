@@ -52,8 +52,12 @@ export function fileDiffKey(
   beforeBlobId: string | undefined,
   afterBlobId: string | undefined,
   changeType: string,
+  ignoreWhitespace?: boolean,
 ): string {
-  return `${beforeBlobId ?? '-'}|${afterBlobId ?? '-'}|${changeType}`;
+  const base = `${beforeBlobId ?? '-'}|${afterBlobId ?? '-'}|${changeType}`;
+  // The whitespace-ignored diff is a different value for the same blob pair, so
+  // it needs its own cache slot.
+  return ignoreWhitespace ? `${base}|iw` : base;
 }
 
 export function differencesKey(

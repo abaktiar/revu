@@ -7,6 +7,8 @@ import type {
   BranchSummary,
   BranchTip,
   CommentDraft,
+  ChecklistItem,
+  ChecklistTemplate,
   CommentNode,
   CommentThread,
   CreatePullRequestInput,
@@ -15,6 +17,7 @@ import type {
   ExpandLinesResponse,
   FileDiff,
   FileDiffEntry,
+  FileDiffOptions,
   FilePair,
   IpcResult,
   ListPRsFilter,
@@ -22,6 +25,7 @@ import type {
   MergePullRequestInput,
   PostCommentInput,
   PostReplyInput,
+  PutReactionInput,
   PRDifferences,
   PRStatus,
   ListDoneEvent,
@@ -55,6 +59,12 @@ import {
   setFavoriteDestination,
   setLastSourceBranch,
 } from './branchPrefs';
+import {
+  getChecklistTemplate,
+  setChecklistTemplate,
+  exportChecklistTemplate,
+  importChecklistTemplate,
+} from './checklistTemplates';
 import { clearAllCaches } from './cache/jsonCache';
 
 export const IPC = {
@@ -94,6 +104,7 @@ export const IPC = {
   commentsPost: 'comments:post',
   commentsReply: 'comments:reply',
   commentsDelete: 'comments:delete',
+  commentsReact: 'comments:react',
   draftsList: 'drafts:list',
   draftsSave: 'drafts:save',
   draftsDelete: 'drafts:delete',
@@ -102,6 +113,10 @@ export const IPC = {
   mergeabilityGet: 'mergeability:get',
   reviewedList: 'reviewed:list',
   reviewedToggle: 'reviewed:toggle',
+  checklistTemplateGet: 'checklist-template:get',
+  checklistTemplateSet: 'checklist-template:set',
+  checklistTemplateExport: 'checklist-template:export',
+  checklistTemplateImport: 'checklist-template:import',
   cacheInvalidatePr: 'cache:invalidate-pr',
   cacheInvalidateRepo: 'cache:invalidate-repo',
   cacheClearAll: 'cache:clear-all',
@@ -615,7 +630,7 @@ export function registerIpc(): void {
       _e,
       repositoryName: string,
       entry: FileDiffEntry,
-      opts?: { forceFresh?: boolean },
+      opts?: FileDiffOptions,
     ): Promise<IpcResult<FileDiff>> => {
       try {
         const p = await getProvider();
@@ -714,6 +729,18 @@ export function registerIpc(): void {
       try {
         const p = await getProvider();
         return ok(await p.deleteComment(input));
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IPC.commentsReact,
+    async (_e, input: PutReactionInput): Promise<IpcResult<void>> => {
+      try {
+        const p = await getProvider();
+        return ok(await p.putCommentReaction(input));
       } catch (err) {
         return fail(err);
       }
@@ -850,6 +877,61 @@ export function registerIpc(): void {
         return ok(
           await setReviewed(pullRequestId, filePath, afterCommitId, reviewed),
         );
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  // ---- approval checklist templates ----------------------------------
+  ipcMain.handle(
+    IPC.checklistTemplateGet,
+    async (
+      _e,
+      repositoryName: string,
+    ): Promise<IpcResult<ChecklistTemplate>> => {
+      try {
+        return ok(await getChecklistTemplate(repositoryName));
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IPC.checklistTemplateSet,
+    async (
+      _e,
+      repositoryName: string,
+      items: ChecklistItem[],
+    ): Promise<IpcResult<ChecklistTemplate>> => {
+      try {
+        return ok(await setChecklistTemplate(repositoryName, items));
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IPC.checklistTemplateExport,
+    async (_e, repositoryName: string): Promise<IpcResult<boolean>> => {
+      try {
+        return ok(await exportChecklistTemplate(repositoryName));
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IPC.checklistTemplateImport,
+    async (
+      _e,
+      repositoryName: string,
+    ): Promise<IpcResult<ChecklistTemplate | null>> => {
+      try {
+        return ok(await importChecklistTemplate(repositoryName));
       } catch (err) {
         return fail(err);
       }

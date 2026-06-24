@@ -29,6 +29,10 @@ export interface PullRequestSummary {
   createdAt?: string; // ISO
   lastActivityAt?: string; // ISO
   targets: PullRequestTarget[];
+  // Total approvals required across all of the PR's approval rules (sum of each
+  // rule's NumberOfApprovalsNeeded). 0 / absent means no rules. Computed for
+  // free from the already-fetched PR, so it adds no API calls to the list.
+  requiredApprovalCount?: number;
 }
 
 export interface PullRequestDetail extends PullRequestSummary {
@@ -263,6 +267,14 @@ export interface DiffHunk {
   isExpansion?: boolean;
 }
 
+// Options for fetching a single file's diff. `ignoreWhitespace` collapses
+// whitespace-only changes (the diff topbar's "hide whitespace" toggle); it
+// changes the computed hunks, so it's part of the cache key.
+export interface FileDiffOptions {
+  forceFresh?: boolean;
+  ignoreWhitespace?: boolean;
+}
+
 export interface FileDiff {
   path: string;
   beforePath?: string;
@@ -322,6 +334,14 @@ export interface CommentNode {
   createdAt?: string;
   lastModified?: string;
   deleted?: boolean;
+  // Aggregated emoji reactions on this comment, keyed by the reaction value
+  // (emoji), as returned by GetCommentsForPullRequest. Absent when none.
+  reactionCounts?: Record<string, number>;
+  // The reaction value(s) the *currently authenticated* user has on this
+  // comment. CodeCommit allows a single reaction per caller per comment, so
+  // this is 0 or 1 entry in practice. Used to highlight + toggle the caller's
+  // own reaction.
+  callerReactions?: string[];
 }
 
 export interface CommentThread {
@@ -366,6 +386,17 @@ export interface DeleteCommentInput {
   repositoryName: string;
 }
 
+// Set/replace/remove the caller's emoji reaction on a comment. `reactionValue`
+// is the emoji to set, or 'none' (or empty) to remove the caller's reaction.
+// pullRequestId + repositoryName are carried so the provider can drop the right
+// comments-cache entry afterward (PutCommentReaction returns an empty body).
+export interface PutReactionInput {
+  commentId: string;
+  reactionValue: string;
+  pullRequestId: string;
+  repositoryName: string;
+}
+
 // ---- Drafts -------------------------------------------------------------
 
 export interface CommentDraft {
@@ -394,12 +425,42 @@ export interface ApprovalStateEntry {
   changedAt?: string;
 }
 
+// One approval rule on a PR, flattened for the UI. Built from the PR's
+// approvalRules (name, parsed rule content) joined with the result of
+// EvaluatePullRequestApprovalRules (which rules are satisfied).
+export interface ApprovalRuleView {
+  name: string;
+  // Approvals the rule requires (NumberOfApprovalsNeeded from the rule content;
+  // 0 when the content couldn't be parsed).
+  requiredCount: number;
+  // Current approvals counting toward this rule — approvers whose ARN matches
+  // the rule's approver pool. Best-effort (pool members are ARN patterns).
+  currentCount: number;
+  // From EvaluatePullRequestApprovalRules. Authoritative even when currentCount
+  // is approximate.
+  satisfied: boolean;
+  // True when the rule was created from an org-level approval rule template.
+  isTemplate: boolean;
+  templateName?: string;
+  // Raw ApprovalPoolMembers patterns (who is allowed to approve this rule).
+  approverPool: string[];
+  // userArns of current approvers counted toward this rule.
+  approvedBy: string[];
+}
+
 export interface PullRequestApprovalView {
   revisionId: string;
   states: ApprovalStateEntry[];
   // Whether the *currently authenticated* user has APPROVE on this revision.
   selfApproved: boolean;
   selfArn?: string;
+  // The PR's approval rules with their satisfied state. Optional so a provider
+  // that can't evaluate rules (or an older cached view) degrades gracefully to
+  // "no rule detail" rather than undefined-access.
+  rules?: ApprovalRuleView[];
+  // True when an admin overrode the approval rules (they no longer need to be
+  // met). Optional for the same cache-compat reason.
+  overridden?: boolean;
 }
 
 // ---- Mergeability -----------------------------------------------------
@@ -540,6 +601,37 @@ export interface UpdatePullRequestInput {
   // an empty-string description is allowed (clears the description).
   title?: string;
   description?: string;
+}
+
+// ---- PR approval checklist (per-repo template) ------------------------
+
+// One item on a repo's approval checklist. `required` items are highlighted in
+// the approve modal (and flagged when unchecked), but the gate is advisory —
+// approving is never blocked.
+export interface ChecklistItem {
+  id: string; // stable local id
+  text: string;
+  required: boolean;
+}
+
+// A repo's approval checklist template. Stored locally per machine and keyed by
+// repository name; exportable/importable as JSON so a team can share one.
+export interface ChecklistTemplate {
+  repositoryName: string;
+  items: ChecklistItem[];
+  updatedAt?: string; // ISO
+}
+
+// On-disk export envelope. Versioned so imports can validate + migrate. Item
+// ids are intentionally omitted (regenerated on import) so a shared file never
+// carries machine-specific ids.
+export interface ChecklistTemplateFile {
+  // Format marker / version. Bump if the shape changes incompatibly.
+  revuChecklistTemplate: 1;
+  items: Array<{ text: string; required: boolean }>;
+  exportedAt?: string;
+  // Informational — which repo it was exported from.
+  repositoryName?: string;
 }
 
 // ---- Per-file local review state --------------------------------------

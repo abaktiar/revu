@@ -17,14 +17,17 @@ import {
   MergePullRequestByFastForwardCommand,
   MergePullRequestBySquashCommand,
   MergePullRequestByThreeWayCommand,
+  type ApprovalRule as CCApprovalRule,
   type Comment as CCComment,
   type CommentsForPullRequest,
+  type Evaluation as CCEvaluation,
   GetDifferencesCommand,
   ListBranchesCommand,
   ListPullRequestsCommand,
   ListRepositoriesCommand,
   PostCommentForPullRequestCommand,
   PostCommentReplyCommand,
+  PutCommentReactionCommand,
   UpdatePullRequestApprovalStateCommand,
   UpdatePullRequestDescriptionCommand,
   UpdatePullRequestStatusCommand,
@@ -41,6 +44,7 @@ import { fromIni, fromNodeProviderChain } from '@aws-sdk/credential-providers';
 import type {
   ActivityEvent,
   ApprovalAction,
+  ApprovalRuleView,
   ApprovalState,
   ApprovalStateEntry,
   BranchSummary,
@@ -55,6 +59,7 @@ import type {
   FileContent,
   FileDiff,
   FileDiffEntry,
+  FileDiffOptions,
   FilePair,
   IpcErrorCode,
   ListPRsFilter,
@@ -64,6 +69,7 @@ import type {
   MergeState,
   PostCommentInput,
   PostReplyInput,
+  PutReactionInput,
   PRDifferences,
   PRStatus,
   PullRequestApprovalView,
@@ -83,7 +89,8 @@ import {
   type ReadOptions,
   type ReviewProvider,
 } from './ReviewProvider';
-import { computeFileDiff, sliceLines } from '../diff/computeFileDiff';
+import { sliceLines } from '../diff/computeFileDiff';
+import { computeFileDiffAsync } from '../diff/diffPool';
 import { getCachedBlob, putBlobInCache } from '../diff/blobCache';
 import {
   getCached,
@@ -679,15 +686,16 @@ export class CodeCommitProvider implements ReviewProvider {
   async getFileDiff(
     repositoryName: string,
     entry: FileDiffEntry,
-    opts?: ReadOptions,
+    opts?: FileDiffOptions,
   ): Promise<FileDiff> {
     // Cache lookup: keyed by the (beforeBlobId, afterBlobId, changeType)
-    // triple. Blob IDs are content-addressed, so the same pair always
-    // produces the same diff. No TTL.
+    // triple plus the ignore-whitespace flag. Blob IDs are content-addressed,
+    // so the same pair + flag always produces the same diff. No TTL.
     const fKey = fileDiffKey(
       entry.beforeBlobId,
       entry.afterBlobId,
       entry.changeType,
+      opts?.ignoreWhitespace,
     );
     if (!opts?.forceFresh) {
       const cached = await getCached<FileDiff>(NS.fileDiff, fKey);
@@ -703,7 +711,9 @@ export class CodeCommitProvider implements ReviewProvider {
       (afterBytes ? looksBinary(afterBytes) : false);
     const beforeText = beforeBytes && !binary ? decodeUtf8(beforeBytes) : null;
     const afterText = afterBytes && !binary ? decodeUtf8(afterBytes) : null;
-    const diff = computeFileDiff({
+    // Run the (synchronous, potentially multi-second) diff on a worker thread so
+    // a large file like package-lock.json doesn't block the main event loop.
+    const diff = await computeFileDiffAsync({
       path: entry.path,
       beforePath: entry.beforePath,
       afterPath: entry.afterPath,
@@ -713,6 +723,7 @@ export class CodeCommitProvider implements ReviewProvider {
       beforeText,
       afterText,
       binary,
+      ignoreWhitespace: opts?.ignoreWhitespace,
     });
     await putCached(NS.fileDiff, fKey, diff, LIMITS.fileDiff);
     return diff;
@@ -1057,9 +1068,10 @@ export class CodeCommitProvider implements ReviewProvider {
       );
       if (cached) return cached;
     }
-    const [states, events] = await Promise.all([
+    const [states, events, evaluation] = await Promise.all([
       this.fetchApprovalStates(pullRequestId, revisionId),
       this.fetchEventsSafe(pullRequestId, opts?.forceFresh),
+      this.fetchApprovalEvaluation(pullRequestId, revisionId),
     ]);
     const selfArn = await this.callerArn();
     const selfApproved = states.some(
@@ -1084,14 +1096,45 @@ export class CodeCommitProvider implements ReviewProvider {
       ...s,
       changedAt: latestApprovalAt.get(s.userArn),
     }));
+    const approverArns = states
+      .filter((s) => s.approvalState === 'APPROVE')
+      .map((s) => s.userArn);
+    const rules = buildApprovalRuleViews(
+      pr.approvalRules,
+      evaluation?.approvalRulesSatisfied ?? [],
+      approverArns,
+    );
     const view: PullRequestApprovalView = {
       revisionId,
       states: enrichedStates,
       selfApproved,
       selfArn,
+      rules,
+      overridden: evaluation?.overridden ?? false,
     };
     await putCached(NS.approval, aKey, view, LIMITS.approval);
     return view;
+  }
+
+  // Full approval-rule evaluation for a revision: which rules are satisfied and
+  // whether they were overridden. Best-effort — null on failure so the approval
+  // view still renders (just without per-rule satisfied state). Not separately
+  // coalesced: getApprovalView caches its whole result by revisionId, so this
+  // fires at most once per revision per cache miss.
+  private async fetchApprovalEvaluation(
+    pullRequestId: string,
+    revisionId: string,
+  ): Promise<CCEvaluation | null> {
+    try {
+      const res = await this.cc(
+        'EvaluatePullRequestApprovalRules',
+        { pullRequestId, revisionId },
+        (i) => this.client.send(new EvaluatePullRequestApprovalRulesCommand(i)),
+      );
+      return res.evaluation ?? null;
+    } catch {
+      return null;
+    }
   }
 
 async getMergeability(
@@ -1552,6 +1595,28 @@ async getMergeability(
     return mapComment(comment);
   }
 
+  // Add, change, or remove the caller's emoji reaction on a comment. A
+  // reactionValue of 'none' (or empty) removes it. PutCommentReaction returns
+  // an empty body, so we invalidate the comments cache and let the caller
+  // refetch to see the updated counts.
+  async putCommentReaction(input: PutReactionInput): Promise<void> {
+    if (!input.commentId) {
+      throw new Error('putCommentReaction requires a commentId.');
+    }
+    await this.cc(
+      'PutCommentReaction',
+      {
+        commentId: input.commentId,
+        reactionValue: input.reactionValue || 'none',
+      },
+      (i) => this.client.send(new PutCommentReactionCommand(i)),
+    );
+    await invalidateCached(
+      NS.comments,
+      commentsKey(input.repositoryName, input.pullRequestId),
+    );
+  }
+
   async createPullRequest(
     input: CreatePullRequestInput,
   ): Promise<PullRequestSummary> {
@@ -1834,6 +1899,135 @@ async getMergeability(
   }
 }
 
+// ---- Approval rule parsing -------------------------------------------
+
+// A PR/template approvalRuleContent is a JSON document. The part we surface:
+//   { "Version": "...", "Statements": [
+//       { "Type": "Approvers", "NumberOfApprovalsNeeded": 2,
+//         "ApprovalPoolMembers": ["arn:...:*", ...] } ] }
+interface ParsedApprovalRule {
+  requiredCount: number;
+  approverPool: string[];
+}
+
+function parseApprovalRuleContent(
+  content: string | undefined,
+): ParsedApprovalRule | null {
+  if (!content) return null;
+  try {
+    const doc = JSON.parse(content) as {
+      Statements?: Array<{
+        NumberOfApprovalsNeeded?: number;
+        ApprovalPoolMembers?: string[];
+      }>;
+    };
+    const statements = Array.isArray(doc.Statements) ? doc.Statements : [];
+    let requiredCount = 0;
+    const approverPool: string[] = [];
+    for (const s of statements) {
+      if (typeof s.NumberOfApprovalsNeeded === 'number') {
+        requiredCount += s.NumberOfApprovalsNeeded;
+      }
+      if (Array.isArray(s.ApprovalPoolMembers)) {
+        for (const m of s.ApprovalPoolMembers) {
+          if (typeof m === 'string') approverPool.push(m);
+        }
+      }
+    }
+    return { requiredCount, approverPool };
+  } catch {
+    return null;
+  }
+}
+
+// Total approvals required across a PR's rules. Computed straight from the
+// already-fetched PR, so it adds no API calls to the list.
+function sumRequiredApprovals(rules: CCApprovalRule[] | undefined): number {
+  let total = 0;
+  for (const r of rules ?? []) {
+    total += parseApprovalRuleContent(r.approvalRuleContent)?.requiredCount ?? 0;
+  }
+  return total;
+}
+
+// Best-effort match of an approver's ARN against an ApprovalPoolMembers
+// pattern. Members can be exact IAM ARNs, assumed-role ARNs with a trailing
+// wildcard (arn:aws:sts::123:assumed-role/Role/*), or the special
+// "CodeCommitApprovers:account:name" shorthand. We glob the '*' wildcards and
+// also accept a loose tail match for the shorthand.
+function globMatch(value: string, pattern: string): boolean {
+  const escaped = pattern
+    .replace(/[.+?^${}()|[\]\\]/g, '\\$&')
+    .replace(/\*/g, '.*');
+  try {
+    return new RegExp(`^${escaped}$`).test(value);
+  } catch {
+    return false;
+  }
+}
+
+function arnMatchesPattern(arn: string, pattern: string): boolean {
+  if (!arn || !pattern) return false;
+  if (arn === pattern) return true;
+  if (globMatch(arn, pattern)) return true;
+  // Approvers usually authenticate via an assumed role, so their userArn is
+  //   arn:aws:sts::ACCT:assumed-role/ROLE/SESSION
+  // while the pool is written with the IAM role ARN (arn:aws:iam::ACCT:role/ROLE)
+  // or the "CodeCommitApprovers:ACCT:ROLE" shorthand. Map the assumed-role ARN
+  // onto those forms before giving up.
+  const assumed = /^arn:aws:sts::(\d+):assumed-role\/([^/]+)\//.exec(arn);
+  if (assumed) {
+    const account = assumed[1]!;
+    const role = assumed[2]!;
+    const roleArn = `arn:aws:iam::${account}:role/${role}`;
+    if (pattern === roleArn || globMatch(roleArn, pattern)) return true;
+  }
+  const parts = pattern.split(':');
+  if (parts.length >= 3 && parts[0] === 'CodeCommitApprovers') {
+    const name = parts[parts.length - 1];
+    if (name && (arn.endsWith(`/${name}`) || (assumed && assumed[2] === name))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Join a PR's approval rules with the result of
+// EvaluatePullRequestApprovalRules into the UI-facing ApprovalRuleView[].
+function buildApprovalRuleViews(
+  rules: CCApprovalRule[] | undefined,
+  satisfiedNames: string[],
+  approverArns: string[],
+): ApprovalRuleView[] {
+  const satisfied = new Set(satisfiedNames);
+  return (rules ?? []).map((r) => {
+    const name = r.approvalRuleName ?? '(unnamed rule)';
+    const parsed = parseApprovalRuleContent(r.approvalRuleContent);
+    const pool = parsed?.approverPool ?? [];
+    const approvedBy =
+      pool.length === 0
+        ? approverArns
+        : approverArns.filter((a) => pool.some((p) => arnMatchesPattern(a, p)));
+    const requiredCount = parsed?.requiredCount ?? 0;
+    const isSatisfied = satisfied.has(name);
+    return {
+      name,
+      requiredCount,
+      // Pool matching is best-effort (approver ARN encodings vary), so never
+      // show "0 of N" next to a satisfied check — clamp up to the requirement
+      // when the authoritative evaluation says the rule is met.
+      currentCount: isSatisfied
+        ? Math.max(approvedBy.length, requiredCount)
+        : approvedBy.length,
+      satisfied: isSatisfied,
+      isTemplate: !!r.originApprovalRuleTemplate,
+      templateName: r.originApprovalRuleTemplate?.approvalRuleTemplateName,
+      approverPool: pool,
+      approvedBy,
+    };
+  });
+}
+
 function mapPullRequest(
   pr: PullRequest,
   approvalState: ApprovalState,
@@ -1853,6 +2047,7 @@ function mapPullRequest(
     createdAt: pr.creationDate?.toISOString(),
     lastActivityAt: pr.lastActivityDate?.toISOString(),
     targets,
+    requiredApprovalCount: sumRequiredApprovals(pr.approvalRules),
   };
 }
 
@@ -2180,6 +2375,10 @@ function mapComment(c: CCComment): CommentNode {
     createdAt: c.creationDate?.toISOString(),
     lastModified: c.lastModifiedDate?.toISOString(),
     deleted: c.deleted,
+    // GetCommentsForPullRequest already returns these — surface them so the UI
+    // can render reaction pills with zero extra API calls.
+    reactionCounts: c.reactionCounts,
+    callerReactions: c.callerReactions,
   };
 }
 

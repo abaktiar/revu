@@ -39,6 +39,10 @@ function buildGroups(): Group[] {
       shortcuts: [
         { keys: ['j'], description: 'Next file' },
         { keys: ['k'], description: 'Previous file' },
+        { keys: ['n', 'N'], description: 'Next / previous comment' },
+        { keys: [']', '['], description: 'Next / previous change' },
+        { keys: [`${cmd}+P`], description: 'Find file' },
+        { keys: [`${cmd}+F`], description: 'Find in diff' },
       ],
     },
     {

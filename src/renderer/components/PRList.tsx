@@ -248,6 +248,15 @@ export function PRList({ prs, repositoryName, onOpen }: Props): JSX.Element {
                 <StatusBadge
                   kind={pr.approvalState.toLowerCase() as StatusKind}
                 />
+                {(pr.requiredApprovalCount ?? 0) > 0 && (
+                  <span
+                    className="approval-req"
+                    title={`This pull request requires ${pr.requiredApprovalCount} approval${pr.requiredApprovalCount === 1 ? '' : 's'}`}
+                  >
+                    <Check size={11} />
+                    {pr.requiredApprovalCount}
+                  </span>
+                )}
               </td>
               <td className="cell-updated" title={pr.lastActivityAt}>
                 {fmtRel(pr.lastActivityAt)}

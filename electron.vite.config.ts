@@ -12,7 +12,12 @@ export default defineConfig({
     resolve: { alias: sharedAlias },
     build: {
       rollupOptions: {
-        input: { index: resolve(__dirname, 'src/main/index.ts') },
+        input: {
+          index: resolve(__dirname, 'src/main/index.ts'),
+          // CPU-bound diff computation runs in this worker thread (spawned by
+          // src/main/diff/diffPool.ts) so big diffs don't block the main process.
+          diffWorker: resolve(__dirname, 'src/main/diff/diffWorker.ts'),
+        },
       },
     },
   },

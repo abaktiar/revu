@@ -76,6 +76,16 @@ export function App(): JSX.Element {
   // every render).
   const sessionIdRef = useRef<string | null>(null);
 
+  // Guards the one-time auto-fetch on launch so re-renders (settings reloads,
+  // status-filter changes that re-create `refresh`) don't re-trigger it.
+  const didInitialFetchRef = useRef(false);
+
+  // Set whenever a PR is created or mutated (approve/merge/close/edit/comment)
+  // while the user is away from the list. On return to the list we refetch
+  // once so the list reflects the change without a manual Refresh. A ref (not
+  // state) so setting it never triggers a render.
+  const listStaleRef = useRef(false);
+
   useEffect(() => {
     unwrap(api.settings.get())
       .then((s) => {
@@ -318,6 +328,30 @@ export function App(): JSX.Element {
     setLoading(null);
   }, [filters.status]);
 
+  // Auto-load the list on launch once credentials/region/repo are configured,
+  // so a cold start lands on PRs instead of the "Click Refresh" empty state.
+  // Declared after the status-reset effect so on mount that one runs first
+  // (clearing the already-empty list) and doesn't cancel the session this
+  // starts. Cache-aware (forceFresh=false): a relaunch within the per-PR TTL
+  // is cheap. The ref guard makes it fire exactly once.
+  useEffect(() => {
+    if (didInitialFetchRef.current) return;
+    if (!settings || !isReadyToFetch(settings)) return;
+    didInitialFetchRef.current = true;
+    void refresh(false);
+  }, [settings, refresh]);
+
+  // On return to the list after a create/mutation, refetch once so the list is
+  // fresh (the new PR appears, a merged/closed PR leaves the OPEN filter, an
+  // approval count updates) without the user pressing Refresh. Gated strictly
+  // on the stale flag so plain back-navigation doesn't spend API calls.
+  useEffect(() => {
+    if (view.kind !== 'list') return;
+    if (!listStaleRef.current) return;
+    listStaleRef.current = false;
+    void refresh(true);
+  }, [view.kind, refresh]);
+
   const visible = useMemo(
     () => applyClientFilters(prs, filters),
     [prs, filters],
@@ -427,6 +461,9 @@ export function App(): JSX.Element {
           repositoryName={settings.repositoryName}
           pullRequest={view.pr}
           onBack={() => setView({ kind: 'list' })}
+          onMutated={() => {
+            listStaleRef.current = true;
+          }}
         />
         <KeyboardHelpOverlay
           open={helpOpen}
@@ -444,10 +481,11 @@ export function App(): JSX.Element {
           openPullRequests={prs}
           onCancel={() => setView({ kind: 'list' })}
           onCreated={(pr) => {
-            // The new PR is also the right landing place — replace the
-            // route with PRDetail for it. The PR list cache was invalidated
-            // by the provider, so navigating back to list will show it
-            // newest-first.
+            // The new PR is also the right landing place — replace the route
+            // with PRDetail for it. Mark the list stale so returning to it
+            // refetches and shows the new PR newest-first (the provider's
+            // cache invalidation alone doesn't repopulate the in-memory list).
+            listStaleRef.current = true;
             setView({ kind: 'detail', pr });
           }}
         />

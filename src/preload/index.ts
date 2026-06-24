@@ -6,6 +6,8 @@ import type {
   AwsProfileInfo,
   BranchSummary,
   BranchTip,
+  ChecklistItem,
+  ChecklistTemplate,
   CommentDraft,
   CommentNode,
   CommentThread,
@@ -15,6 +17,7 @@ import type {
   ExpandLinesResponse,
   FileDiff,
   FileDiffEntry,
+  FileDiffOptions,
   FilePair,
   IpcResult,
   ListPRsFilter,
@@ -22,6 +25,7 @@ import type {
   MergePullRequestInput,
   PostCommentInput,
   PostReplyInput,
+  PutReactionInput,
   PRDifferences,
   PRStatus,
   ListDoneEvent,
@@ -75,6 +79,7 @@ const CH = {
   commentsPost: 'comments:post',
   commentsReply: 'comments:reply',
   commentsDelete: 'comments:delete',
+  commentsReact: 'comments:react',
   draftsList: 'drafts:list',
   draftsSave: 'drafts:save',
   draftsDelete: 'drafts:delete',
@@ -83,6 +88,10 @@ const CH = {
   mergeabilityGet: 'mergeability:get',
   reviewedList: 'reviewed:list',
   reviewedToggle: 'reviewed:toggle',
+  checklistTemplateGet: 'checklist-template:get',
+  checklistTemplateSet: 'checklist-template:set',
+  checklistTemplateExport: 'checklist-template:export',
+  checklistTemplateImport: 'checklist-template:import',
   cacheInvalidatePr: 'cache:invalidate-pr',
   cacheInvalidateRepo: 'cache:invalidate-repo',
   cacheClearAll: 'cache:clear-all',
@@ -242,7 +251,7 @@ const api = {
     fileDiff: (
       repositoryName: string,
       entry: FileDiffEntry,
-      opts?: ReadOpts,
+      opts?: FileDiffOptions,
     ): Promise<IpcResult<FileDiff>> =>
       ipcRenderer.invoke(CH.prsFileDiff, repositoryName, entry, opts),
     expandLines: (
@@ -305,6 +314,8 @@ const api = {
       ipcRenderer.invoke(CH.commentsReply, input),
     delete: (input: DeleteCommentInput): Promise<IpcResult<CommentNode>> =>
       ipcRenderer.invoke(CH.commentsDelete, input),
+    react: (input: PutReactionInput): Promise<IpcResult<void>> =>
+      ipcRenderer.invoke(CH.commentsReact, input),
   },
   drafts: {
     list: (pullRequestId: string): Promise<IpcResult<CommentDraft[]>> =>
@@ -377,6 +388,21 @@ const api = {
         afterCommitId,
         reviewed,
       ),
+  },
+  checklistTemplate: {
+    get: (repositoryName: string): Promise<IpcResult<ChecklistTemplate>> =>
+      ipcRenderer.invoke(CH.checklistTemplateGet, repositoryName),
+    set: (
+      repositoryName: string,
+      items: ChecklistItem[],
+    ): Promise<IpcResult<ChecklistTemplate>> =>
+      ipcRenderer.invoke(CH.checklistTemplateSet, repositoryName, items),
+    export: (repositoryName: string): Promise<IpcResult<boolean>> =>
+      ipcRenderer.invoke(CH.checklistTemplateExport, repositoryName),
+    import: (
+      repositoryName: string,
+    ): Promise<IpcResult<ChecklistTemplate | null>> =>
+      ipcRenderer.invoke(CH.checklistTemplateImport, repositoryName),
   },
   menu: {
     // Fires when the user picks File → New Pull Request from the app menu

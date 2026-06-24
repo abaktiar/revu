@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   ActivityEvent,
   ApprovalAction,
+  ChecklistItem,
   CommentDraft,
+  CommentNode,
   CommentThread,
   FileDiffEntry,
   MergeabilityState,
@@ -27,17 +29,26 @@ import {
 import type {
   DiffCallbacks,
   DiffContext,
+  DiffSearchMatch,
 } from './ContinuousDiff/types';
 import { PRMetadata } from './PRMetadata';
 import { Markdown } from './Markdown';
+import { CommentReactions, normalizeReaction } from './CommentReactions';
+import {
+  RESOLVE_MARKER,
+  REOPEN_MARKER,
+  isResolutionMarkerEvent,
+} from './threadResolution';
 import { ErrorBanner } from './ErrorBanner';
-import { MergeDialog, EditPRDialog } from './PRDialogs';
+import { MergeDialog, EditPRDialog, ChecklistApproveModal } from './PRDialogs';
 import { FileFinder } from './FileFinder';
 import type { SidebarTab } from './FileSidebar';
 import {
   ArrowLeft,
   Check,
   CheckCircle,
+  ChevronDown,
+  ChevronUp,
   Edit3,
   ExternalLink,
   Eye,
@@ -58,13 +69,37 @@ const EMPTY_DRAFTS: CommentDraft[] = [];
 const EMPTY_PATHS: Set<string> = new Set();
 const EMPTY_COUNTS: Record<string, number> = {};
 
+// Optimistically apply a reaction toggle to a comment so the pill updates
+// instantly; refreshThreads then reconciles with the server. CodeCommit keeps
+// a single reaction per caller per comment, so setting a new one replaces the
+// previous, and 'none' clears it.
+function applyOptimisticReaction(c: CommentNode, value: string): CommentNode {
+  const v = normalizeReaction(value);
+  const counts: Record<string, number> = { ...(c.reactionCounts ?? {}) };
+  const prev = normalizeReaction((c.callerReactions ?? [])[0] ?? '');
+  if (prev && counts[prev]) {
+    const n = counts[prev] - 1;
+    if (n > 0) counts[prev] = n;
+    else delete counts[prev];
+  }
+  if (!v || v === 'none') {
+    return { ...c, reactionCounts: counts, callerReactions: [] };
+  }
+  counts[v] = (counts[v] ?? 0) + 1;
+  return { ...c, reactionCounts: counts, callerReactions: [v] };
+}
+
 interface Props {
   repositoryName: string;
   pullRequest: PullRequestSummary;
   onBack: () => void;
+  // Notifies the parent that this PR changed (approve/revoke, merge,
+  // close/reopen, edit, comment) so the list can refresh itself on return.
+  // Optional so PRDetail stays usable without a list behind it.
+  onMutated?: () => void;
 }
 
-export function PRDetail({ repositoryName, pullRequest, onBack }: Props): JSX.Element {
+export function PRDetail({ repositoryName, pullRequest, onBack, onMutated }: Props): JSX.Element {
   const [detail, setDetail] = useState<PullRequestDetail | null>(null);
   const [differences, setDifferences] = useState<PRDifferences | null>(null);
   const [activeFile, setActiveFile] = useState<string | null>(null);
@@ -94,6 +129,15 @@ export function PRDetail({ repositoryName, pullRequest, onBack }: Props): JSX.El
   const [mergeOpen, setMergeOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [finderOpen, setFinderOpen] = useState(false);
+  // The repo's approval checklist (empty when none configured) and whether the
+  // approve-checklist modal is open.
+  const [checklistItems, setChecklistItems] = useState<ChecklistItem[]>([]);
+  const [checklistApproveOpen, setChecklistApproveOpen] = useState(false);
+  // In-diff find (Cmd/Ctrl+F): query, matching files, and the current index.
+  const [findOpen, setFindOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState('');
+  const [findMatches, setFindMatches] = useState<DiffSearchMatch[]>([]);
+  const [findIdx, setFindIdx] = useState(0);
   // ---- View mode -----------------------------------------------------
   // Default view is the PR's full diff. Selecting a commit in the sidebar
   // switches to viewing that single commit's diff (parent → commit). The
@@ -104,6 +148,9 @@ export function PRDetail({ repositoryName, pullRequest, onBack }: Props): JSX.El
   const [commitDiff, setCommitDiff] = useState<PRDifferences | null>(null);
   const [commitDiffLoading, setCommitDiffLoading] = useState(false);
   const [commitDiffError, setCommitDiffError] = useState<unknown>(null);
+  // Diff topbar: "hide whitespace" recomputes diffs ignoring whitespace-only
+  // changes (threaded into DiffContext → FileDiffSection → loadFileDiff).
+  const [ignoreWhitespace, setIgnoreWhitespace] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('files');
   // Sidebar visibility is per-session only (not persisted) — it always opens
   // showing the file list, and the toggle lives in the diff topbar.
@@ -121,6 +168,19 @@ export function PRDetail({ repositoryName, pullRequest, onBack }: Props): JSX.El
   const sidebarWidthRef = useRef(sidebarWidth);
   sidebarWidthRef.current = sidebarWidth;
   const diffRef = useRef<ContinuousDiffHandle | null>(null);
+
+  // Keep the latest onMutated in a ref so mutation handlers can notify the
+  // parent without taking onMutated as a dependency — its identity changes
+  // every parent render, and threading it through useCallback deps would bust
+  // the carefully-tuned memoization chain feeding ContinuousDiff.
+  const onMutatedRef = useRef(onMutated);
+  useEffect(() => {
+    onMutatedRef.current = onMutated;
+  }, [onMutated]);
+
+  // Monotonic token so out-of-order reaction refetches (rapid 👍→👎) don't let
+  // an earlier, stale comment list overwrite the latest one.
+  const reactionNonceRef = useRef(0);
 
   const onResizeMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -263,6 +323,22 @@ export function PRDetail({ repositoryName, pullRequest, onBack }: Props): JSX.El
     };
   }, [repositoryName, pullRequest.id, refreshToken]);
 
+  // Load this repo's approval checklist template once. Best-effort: a failure
+  // just means no checklist gate on approve.
+  useEffect(() => {
+    let cancelled = false;
+    unwrap(api.checklistTemplate.get(repositoryName))
+      .then((tpl) => {
+        if (!cancelled) setChecklistItems(tpl.items);
+      })
+      .catch(() => {
+        if (!cancelled) setChecklistItems([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [repositoryName]);
+
   // Resolve the provider's deep-link to the PR's web UI (AWS Console for the
   // CodeCommit provider). Region is held by the provider, so we just ask. If
   // it returns undefined (no region configured), we just won't render the link.
@@ -334,6 +410,45 @@ export function PRDetail({ repositoryName, pullRequest, onBack }: Props): JSX.El
     return () => window.removeEventListener('keydown', onKey);
   }, [selectedCommit]);
 
+  // Esc returns to the PR list from the full diff view — the affordance the
+  // Back button's "(Esc)" label promises. Deliberately layered *below* the
+  // escape ladder's other rungs: when a commit is selected the effect above
+  // owns Esc (returns to the PR diff first); the dialogs (merge/edit/finder)
+  // and the help overlay own it while open (the overlay listens in the capture
+  // phase, so it pre-empts this); an open overflow menu consumes it via the
+  // DOM check below. Only when none of those apply does Esc go back.
+  useEffect(() => {
+    if (
+      selectedCommit ||
+      mergeOpen ||
+      editOpen ||
+      finderOpen ||
+      findOpen ||
+      checklistApproveOpen
+    )
+      return;
+    function onKey(e: KeyboardEvent): void {
+      if (e.key !== 'Escape') return;
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      // Let an open popup (e.g. the overflow menu) consume Esc to close itself
+      // before we navigate away.
+      if (document.querySelector('.overflow-menu-popup')) return;
+      e.preventDefault();
+      onBack();
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [
+    selectedCommit,
+    mergeOpen,
+    editOpen,
+    finderOpen,
+    findOpen,
+    checklistApproveOpen,
+    onBack,
+  ]);
+
   // Hard refresh: drop every cached entry tied to this PR (and the in-memory
   // blob cache, since file diffs are keyed by blob IDs and we want truly
   // everything re-read on a user-driven refresh) and re-run the load effect.
@@ -365,13 +480,50 @@ export function PRDetail({ repositoryName, pullRequest, onBack }: Props): JSX.El
     return new Set(reviewed.filter((r) => r.reviewedAtAfterCommit === current).map((r) => r.filePath));
   }, [reviewed, differences]);
 
+  // Files the user had marked reviewed against an older revision and that
+  // aren't re-reviewed at the current one — surfaced as a banner instead of
+  // silently dropping their checkmarks when a new commit lands.
+  const staleReviewedCount = useMemo(() => {
+    if (!differences) return 0;
+    const current = differences.afterCommitId;
+    const currentSet = new Set(
+      reviewed
+        .filter((r) => r.reviewedAtAfterCommit === current)
+        .map((r) => r.filePath),
+    );
+    const stale = new Set(
+      reviewed
+        .filter(
+          (r) =>
+            r.reviewedAtAfterCommit !== current && !currentSet.has(r.filePath),
+        )
+        .map((r) => r.filePath),
+    );
+    return stale.size;
+  }, [reviewed, differences]);
+  const [staleDismissedFor, setStaleDismissedFor] = useState<string | null>(null);
+  const showStaleBanner =
+    staleReviewedCount > 0 &&
+    !!differences &&
+    staleDismissedFor !== differences.afterCommitId;
+
   const generalComments = useMemo(() => threads.filter((t) => !t.filePath), [threads]);
+
+  // The resolve feature posts [revu:resolved]/[revu:reopened] marker replies;
+  // keep those implementation-detail comments out of the activity timeline.
+  const visibleActivity = useMemo(
+    () => activity.filter((ev) => !isResolutionMarkerEvent(ev)),
+    [activity],
+  );
 
   // ---- Mutation handlers ---------------------------------------------
   const refreshThreads = useCallback(async (): Promise<void> => {
     try {
       const fresh = await unwrap(api.comments.list(repositoryName, pullRequest.id));
       setThreads(fresh);
+      // A posted/replied/deleted comment changes the PR's last-activity time,
+      // so flag the list for refresh on return.
+      onMutatedRef.current?.();
       // Comments are part of the activity feed, so keep the timeline in sync
       // after a post/reply/delete. Best-effort: a failure here just leaves a
       // slightly stale Activity tab, not a broken comment flow.
@@ -379,34 +531,95 @@ export function PRDetail({ repositoryName, pullRequest, onBack }: Props): JSX.El
         .then((ev) => setActivity(ev))
         .catch(() => {});
     } catch (err) {
-      setLoadError(err);
+      // A failed comment refetch is an action-level error: surface it in the
+      // dismissible banner, never blank the whole page (which would unmount
+      // the diff the reviewer is mid-review on).
+      setActionError(err);
     }
   }, [repositoryName, pullRequest.id]);
 
   const postComment = useCallback(
     async (input: PostCommentInput): Promise<void> => {
       setPostingThreadId('__composer__');
+      // Optimistically insert a synthetic thread on the line so the comment
+      // appears instantly; refreshThreads replaces it with the server truth,
+      // and a failure rolls it back (then rethrows so the composer shows the
+      // error and stays open).
+      const tempId = `temp-${crypto.randomUUID()}`;
+      setThreads((cur) => [
+        ...cur,
+        {
+          threadId: tempId,
+          pullRequestId: input.pullRequestId,
+          repositoryName: input.repositoryName,
+          beforeCommitId: input.beforeCommitId,
+          afterCommitId: input.afterCommitId,
+          filePath: input.filePath,
+          filePosition: input.filePosition,
+          relativeFileVersion: input.relativeFileVersion,
+          comments: [
+            {
+              id: `${tempId}-c`,
+              content: input.content,
+              authorArn: approval?.selfArn,
+              createdAt: new Date().toISOString(),
+            },
+          ],
+        },
+      ]);
       try {
         await unwrap(api.comments.post(input));
         await refreshThreads();
+      } catch (err) {
+        setThreads((cur) => cur.filter((t) => t.threadId !== tempId));
+        throw err;
       } finally {
         setPostingThreadId(null);
       }
     },
-    [refreshThreads],
+    [refreshThreads, approval?.selfArn],
   );
 
   const postReply = useCallback(
     async (threadId: string, content: string): Promise<void> => {
       setPostingThreadId(threadId);
+      const tempId = `temp-${crypto.randomUUID()}`;
+      setThreads((cur) =>
+        cur.map((t) =>
+          t.threadId === threadId
+            ? {
+                ...t,
+                comments: [
+                  ...t.comments,
+                  {
+                    id: tempId,
+                    content,
+                    inReplyTo: threadId,
+                    authorArn: approval?.selfArn,
+                    createdAt: new Date().toISOString(),
+                  },
+                ],
+              }
+            : t,
+        ),
+      );
       try {
         await unwrap(api.comments.reply({ inReplyTo: threadId, content }));
         await refreshThreads();
+      } catch (err) {
+        setThreads((cur) =>
+          cur.map((t) =>
+            t.threadId === threadId
+              ? { ...t, comments: t.comments.filter((c) => c.id !== tempId) }
+              : t,
+          ),
+        );
+        throw err;
       } finally {
         setPostingThreadId(null);
       }
     },
-    [refreshThreads],
+    [refreshThreads, approval?.selfArn],
   );
 
   const saveDraft = useCallback(
@@ -467,13 +680,81 @@ export function PRDetail({ repositoryName, pullRequest, onBack }: Props): JSX.El
           }),
         );
       } catch (err) {
-        // Roll back the optimistic update by re-fetching the truth.
-        setLoadError(err);
+        // Surface as a dismissible action error (not a page-blanking load
+        // error); the finally below re-fetches the truth, rolling back the
+        // optimistic soft-delete if the server rejected it.
+        setActionError(err);
       } finally {
         await refreshThreads();
       }
     },
     [pullRequest.id, repositoryName, refreshThreads],
+  );
+
+  // Set/replace/remove the caller's emoji reaction on a comment. Optimistic so
+  // the pill flips immediately; refreshThreads reconciles with the server.
+  const reactToComment = useCallback(
+    (commentId: string, value: string): void => {
+      setThreads((cur) =>
+        cur.map((t) => ({
+          ...t,
+          comments: t.comments.map((c) =>
+            c.id === commentId ? applyOptimisticReaction(c, value) : c,
+          ),
+        })),
+      );
+      const myNonce = ++reactionNonceRef.current;
+      void (async () => {
+        try {
+          await unwrap(
+            api.comments.react({
+              commentId,
+              reactionValue: value,
+              pullRequestId: pullRequest.id,
+              repositoryName,
+            }),
+          );
+          const fresh = await unwrap(
+            api.comments.list(repositoryName, pullRequest.id),
+          );
+          // Only the most recent reaction's result is allowed to land, so a
+          // slower earlier request can't clobber it.
+          if (reactionNonceRef.current !== myNonce) return;
+          setThreads(fresh);
+          onMutatedRef.current?.();
+          unwrap(api.prs.activity(repositoryName, pullRequest.id))
+            .then((ev) => setActivity(ev))
+            .catch(() => {});
+        } catch (err) {
+          if (reactionNonceRef.current !== myNonce) return;
+          setActionError(err);
+          // Reconcile the optimistic pill back to the server truth.
+          await refreshThreads();
+        }
+      })();
+    },
+    [pullRequest.id, repositoryName, refreshThreads],
+  );
+
+  // Resolve / reopen a line-anchored thread. CodeCommit has no native resolve,
+  // so we post a marker reply ([revu:resolved] / [revu:reopened]) — the latest
+  // marker decides the state, which makes it shared with the whole team.
+  const resolveThread = useCallback(
+    async (threadId: string, resolved: boolean): Promise<void> => {
+      try {
+        await unwrap(
+          api.comments.reply({
+            inReplyTo: threadId,
+            content: resolved ? RESOLVE_MARKER : REOPEN_MARKER,
+          }),
+        );
+      } catch (err) {
+        setActionError(err);
+      } finally {
+        await refreshThreads();
+      }
+    },
+    [refreshThreads],
   );
 
   const toggleReviewed = useCallback(
@@ -486,7 +767,7 @@ export function PRDetail({ repositoryName, pullRequest, onBack }: Props): JSX.El
           return entry ? [...filtered, entry] : filtered;
         });
       } catch (err) {
-        setLoadError(err);
+        setActionError(err);
       }
     },
     [differences, pullRequest.id],
@@ -528,8 +809,9 @@ export function PRDetail({ repositoryName, pullRequest, onBack }: Props): JSX.El
       postingThreadId,
       selfArn: approval?.selfArn,
       readOnly: viewMode === 'commit',
+      ignoreWhitespace,
     };
-  }, [currentDiff, pullRequest.id, repositoryName, postingThreadId, approval?.selfArn, viewMode]);
+  }, [currentDiff, pullRequest.id, repositoryName, postingThreadId, approval?.selfArn, viewMode, ignoreWhitespace]);
 
   const callbacks: DiffCallbacks = useMemo(
     () => ({
@@ -538,9 +820,20 @@ export function PRDetail({ repositoryName, pullRequest, onBack }: Props): JSX.El
       onSaveDraft: saveDraft,
       onDeleteDraft: deleteDraft,
       onDeleteComment: deleteComment,
+      onReactToComment: reactToComment,
+      onResolveThread: resolveThread,
       onToggleReviewed: toggleReviewedSync,
     }),
-    [postComment, postReply, saveDraft, deleteDraft, deleteComment, toggleReviewedSync],
+    [
+      postComment,
+      postReply,
+      saveDraft,
+      deleteDraft,
+      deleteComment,
+      reactToComment,
+      resolveThread,
+      toggleReviewedSync,
+    ],
   );
 
   const onActiveFileChange = useCallback((path: string | null): void => {
@@ -594,20 +887,83 @@ export function PRDetail({ repositoryName, pullRequest, onBack }: Props): JSX.El
   );
 
   const applyApproval = useCallback(
-    async (action: ApprovalAction): Promise<void> => {
+    async (action: ApprovalAction): Promise<boolean> => {
       setApprovalBusy(true);
       try {
         const next = await unwrap(api.approval.update(repositoryName, pullRequest.id, action));
         setApproval(next);
         const fresh = await unwrap(api.prs.get(repositoryName, pullRequest.id));
         setDetail(fresh);
+        onMutatedRef.current?.();
+        return true;
       } catch (err) {
-        setLoadError(err);
+        setActionError(err);
+        return false;
       } finally {
         setApprovalBusy(false);
       }
     },
     [repositoryName, pullRequest.id],
+  );
+
+  // Approve entry point used by the toolbar + menu. If the repo has a checklist,
+  // open the (advisory) checklist modal first; otherwise approve directly.
+  const requestApprove = useCallback((): void => {
+    if (checklistItems.length > 0) {
+      setActionError(null);
+      setChecklistApproveOpen(true);
+    } else {
+      void applyApproval('APPROVE');
+    }
+  }, [checklistItems.length, applyApproval]);
+
+  // Approve first, then record the checklist acknowledgement in the PR
+  // description. Ordering matters: the description is shared remote state, so we
+  // only mutate it once the approval has actually succeeded — otherwise a failed
+  // approval would leave an "approved-looking" checklist block with no approval
+  // behind it.
+  const submitApproveWithChecklist = useCallback(
+    async (checked: Record<string, boolean>): Promise<void> => {
+      const ok = await applyApproval('APPROVE');
+      // Keep the modal open on failure so its inline error shows and the user's
+      // checked state isn't lost. No remote description write happens.
+      if (!ok) return;
+
+      if (checklistItems.length > 0) {
+        try {
+          // Re-read the description fresh immediately before writing so the
+          // per-approver block is merged into the *latest* server state, not the
+          // copy loaded when this view opened. CodeCommit's
+          // UpdatePullRequestDescription is a full overwrite with no
+          // conditional/etag option, so without this a concurrent description
+          // edit by another reviewer would be silently clobbered. This shrinks
+          // that window to a single round-trip (the irreducible floor for this
+          // API); the upsert only touches our own marker, so other approvers'
+          // blocks are preserved either way.
+          const fresh = await unwrap(api.prs.get(repositoryName, pullRequest.id));
+          const approver = shortArn(approval?.selfArn);
+          const block = buildChecklistBlock(approver, checklistItems, checked);
+          const baseDesc = fresh.description ?? '';
+          const nextDesc = upsertChecklistBlock(baseDesc, markerKey(approver), block);
+          if (nextDesc !== baseDesc) {
+            const updated = await unwrap(
+              api.prs.update({
+                repositoryName,
+                pullRequestId: pullRequest.id,
+                description: nextDesc,
+              }),
+            );
+            setDetail(updated);
+          }
+        } catch (err) {
+          // Non-fatal: the approval already succeeded; the description record is
+          // an advisory audit aid.
+          console.error('[approve] checklist description update failed:', err);
+        }
+      }
+      setChecklistApproveOpen(false);
+    },
+    [checklistItems, approval?.selfArn, repositoryName, pullRequest.id, applyApproval],
   );
 
   // Re-read mergeability from AWS after a state-changing action. Best-effort:
@@ -644,6 +1000,7 @@ export function PRDetail({ repositoryName, pullRequest, onBack }: Props): JSX.El
         );
         setDetail(updated);
         setMergeOpen(false);
+        onMutatedRef.current?.();
         await reloadMergeability();
       } catch (err) {
         setActionError(err);
@@ -661,6 +1018,7 @@ export function PRDetail({ repositoryName, pullRequest, onBack }: Props): JSX.El
       try {
         const updated = await unwrap(api.prs.setStatus(repositoryName, pullRequest.id, status));
         setDetail(updated);
+        onMutatedRef.current?.();
         await reloadMergeability();
       } catch (err) {
         setActionError(err);
@@ -686,6 +1044,7 @@ export function PRDetail({ repositoryName, pullRequest, onBack }: Props): JSX.El
         );
         setDetail(updated);
         setEditOpen(false);
+        onMutatedRef.current?.();
       } catch (err) {
         setActionError(err);
       } finally {
@@ -695,9 +1054,86 @@ export function PRDetail({ repositoryName, pullRequest, onBack }: Props): JSX.El
     [repositoryName, pullRequest.id],
   );
 
+  // Run the in-diff find for a query, navigating to the first matching file.
+  const runFind = useCallback((query: string): void => {
+    setFindQuery(query);
+    const m = diffRef.current?.searchFiles(query) ?? [];
+    setFindMatches(m);
+    setFindIdx(0);
+    const first = m[0];
+    if (first) {
+      const reduced = window.matchMedia(
+        '(prefers-reduced-motion: reduce)',
+      ).matches;
+      diffRef.current?.scrollToFile(first.path, {
+        behavior: reduced ? 'auto' : 'smooth',
+        block: 'start',
+      });
+    }
+  }, []);
+
+  const stepFind = useCallback(
+    (dir: number): void => {
+      setFindIdx((prev) => {
+        if (findMatches.length === 0) return prev;
+        const next = (prev + dir + findMatches.length) % findMatches.length;
+        const target = findMatches[next];
+        if (target) diffRef.current?.scrollToFile(target.path, { block: 'start' });
+        return next;
+      });
+    },
+    [findMatches],
+  );
+
+  const closeFind = useCallback((): void => {
+    setFindOpen(false);
+    setFindQuery('');
+    setFindMatches([]);
+    setFindIdx(0);
+  }, []);
+
+  // Reconcile the find results as files stream in: a query typed before all
+  // diffs loaded would otherwise show a stale count. Reads find state via refs
+  // so the callback stays stable, and debounces the background-load wave.
+  const findOpenRef = useRef(findOpen);
+  findOpenRef.current = findOpen;
+  const findQueryRef = useRef(findQuery);
+  findQueryRef.current = findQuery;
+  const findReconcileTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const onDiffsChanged = useCallback((): void => {
+    if (!findOpenRef.current || !findQueryRef.current.trim()) return;
+    if (findReconcileTimer.current) return;
+    findReconcileTimer.current = setTimeout(() => {
+      findReconcileTimer.current = null;
+      const q = findQueryRef.current;
+      if (!findOpenRef.current || !q.trim()) return;
+      const m = diffRef.current?.searchFiles(q) ?? [];
+      setFindMatches(m);
+      setFindIdx((prev) => (m.length === 0 ? 0 : Math.min(prev, m.length - 1)));
+    }, 250);
+  }, []);
+  useEffect(
+    () => () => {
+      if (findReconcileTimer.current) clearTimeout(findReconcileTimer.current);
+    },
+    [],
+  );
+
   // ---- Keyboard navigation -------------------------------------------
   useEffect(() => {
     function onKey(e: KeyboardEvent): void {
+      // Cmd/Ctrl+F → in-diff find. Handled before the typing guard so it works
+      // even when focus is in the diff; intercept before the browser's find.
+      if (
+        (e.metaKey || e.ctrlKey) &&
+        !e.shiftKey &&
+        !e.altKey &&
+        (e.key === 'f' || e.key === 'F')
+      ) {
+        e.preventDefault();
+        setFindOpen(true);
+        return;
+      }
       // Never hijack keys while the user is typing in a field — this guard sits
       // above the Cmd/Ctrl+P handler so the finder won't pop while editing a
       // comment, title, or filter.
@@ -715,6 +1151,20 @@ export function PRDetail({ repositoryName, pullRequest, onBack }: Props): JSX.El
       } else if (e.key === 'k') {
         e.preventDefault();
         diffRef.current?.scrollToFileBy(-1);
+      } else if (e.key === 'n') {
+        // Next / previous comment thread (Shift+N goes back).
+        e.preventDefault();
+        diffRef.current?.scrollToAdjacentComment(1);
+      } else if (e.key === 'N') {
+        e.preventDefault();
+        diffRef.current?.scrollToAdjacentComment(-1);
+      } else if (e.key === ']') {
+        // Next / previous changed hunk.
+        e.preventDefault();
+        diffRef.current?.scrollToAdjacentChange(1);
+      } else if (e.key === '[') {
+        e.preventDefault();
+        diffRef.current?.scrollToAdjacentChange(-1);
       }
     }
     window.addEventListener('keydown', onKey);
@@ -727,7 +1177,7 @@ export function PRDetail({ repositoryName, pullRequest, onBack }: Props): JSX.El
     approval,
     mergeability,
     approvalBusy,
-    onApprove: () => void applyApproval('APPROVE'),
+    onApprove: requestApprove,
     onRevoke: () => void applyApproval('REVOKE'),
     onBack,
     generalCount: generalComments.length,
@@ -792,6 +1242,24 @@ export function PRDetail({ repositoryName, pullRequest, onBack }: Props): JSX.El
           webUrl={webUrl}
         />
       )}
+      {showStaleBanner && (
+        <div className='stale-reviewed-banner' role='status'>
+          <span>
+            The source branch has new commits since you last reviewed.{' '}
+            <strong>{staleReviewedCount}</strong> file
+            {staleReviewedCount === 1 ? '' : 's'} you&rsquo;d marked reviewed are
+            shown unreviewed against the latest revision.
+          </span>
+          <button
+            type='button'
+            onClick={() =>
+              setStaleDismissedFor(differences?.afterCommitId ?? null)
+            }
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
       <div className='pr-body'>
         <FileSidebar
           sidebarOpen={sidebarOpen}
@@ -806,7 +1274,7 @@ export function PRDetail({ repositoryName, pullRequest, onBack }: Props): JSX.El
           onToggleReviewed={toggleReviewedSync}
           filesReadOnly={viewMode === 'commit'}
           selectedCommitId={selectedCommit?.id}
-          activity={activity}
+          activity={visibleActivity}
           activityLoading={activityLoading}
           onActivitySelect={onActivitySelect}
         />
@@ -826,7 +1294,27 @@ export function PRDetail({ repositoryName, pullRequest, onBack }: Props): JSX.El
               aria-label={sidebarOpen ? 'Hide file list' : 'Show file list'}>
               <PanelLeft size={15} filled={sidebarOpen} />
             </button>
+            <span className='grow' />
+            <button
+              type='button'
+              className={`diff-ws-toggle${ignoreWhitespace ? ' is-active' : ''}`}
+              aria-pressed={ignoreWhitespace}
+              onClick={() => setIgnoreWhitespace((v) => !v)}
+              title='Ignore whitespace-only changes in the diff'>
+              <span aria-hidden>¶</span>
+              <span>Whitespace</span>
+            </button>
           </div>
+          {findOpen && (
+            <DiffFindBar
+              query={findQuery}
+              matches={findMatches}
+              idx={findIdx}
+              onQuery={runFind}
+              onStep={stepFind}
+              onClose={closeFind}
+            />
+          )}
           {viewMode === 'commit' && selectedCommit && (
             <CommitBanner commit={selectedCommit} onBack={onBackToPrDiff} loading={commitDiffLoading} />
           )}
@@ -858,6 +1346,7 @@ export function PRDetail({ repositoryName, pullRequest, onBack }: Props): JSX.El
                 ctx={ctx}
                 callbacks={callbacks}
                 onActiveFileChange={onActiveFileChange}
+                onDiffsChanged={onDiffsChanged}
               />
             </div>
           )}
@@ -896,6 +1385,9 @@ export function PRDetail({ repositoryName, pullRequest, onBack }: Props): JSX.El
                       <div className='comment-body'>
                         {c.deleted ? <i>(deleted)</i> : <Markdown source={c.content} />}
                       </div>
+                      {!c.deleted && (
+                        <CommentReactions comment={c} onReact={reactToComment} />
+                      )}
                     </div>
                   );
                 })}
@@ -936,6 +1428,150 @@ export function PRDetail({ repositoryName, pullRequest, onBack }: Props): JSX.El
           onClose={() => setFinderOpen(false)}
         />
       )}
+      {checklistApproveOpen && (
+        <ChecklistApproveModal
+          items={checklistItems}
+          busy={approvalBusy}
+          error={actionError}
+          onCancel={() => {
+            setActionError(null);
+            setChecklistApproveOpen(false);
+          }}
+          onApprove={(checked) => void submitApproveWithChecklist(checked)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ---- Approval-checklist description helpers ----------------------------
+
+// Build the markdown block recorded in the PR description on approve. Lists
+// every checklist item with its checked state so the description is a complete
+// record of what the approver acknowledged.
+function buildChecklistBlock(
+  approver: string,
+  items: ChecklistItem[],
+  checked: Record<string, boolean>,
+): string {
+  const date = new Date().toISOString().slice(0, 10);
+  const lines = items.map(
+    (it) =>
+      `- [${checked[it.id] ? 'x' : ' '}] ${it.text}${it.required ? '' : ' _(optional)_'}`,
+  );
+  return `### ✅ Approval checklist — ${approver} · ${date}\n${lines.join('\n')}`;
+}
+
+// A safe per-approver marker key for the HTML-comment delimiters.
+function markerKey(approver: string): string {
+  return approver.replace(/[^a-zA-Z0-9._-]+/g, '-') || 'reviewer';
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Insert (or replace) this approver's checklist block in the description,
+// delimited by HTML-comment markers so re-approving updates the same block
+// instead of stacking duplicates. New blocks append after the existing
+// description.
+function upsertChecklistBlock(
+  description: string,
+  key: string,
+  block: string,
+): string {
+  const start = `<!-- revu:checklist:${key} -->`;
+  const end = `<!-- /revu:checklist:${key} -->`;
+  const wrapped = `${start}\n${block}\n${end}`;
+  const re = new RegExp(`${escapeRegExp(start)}[\\s\\S]*?${escapeRegExp(end)}`);
+  // Function replacement so `$`-sequences in the user's checklist text (e.g.
+  // "$&", "$1") aren't interpreted as substitution patterns.
+  if (re.test(description)) return description.replace(re, () => wrapped);
+  const sep = description.trim().length > 0 ? '\n\n' : '';
+  return `${description}${sep}${wrapped}`;
+}
+
+// In-diff find bar (Cmd/Ctrl+F). Searches every loaded file diff and steps
+// between matching files. Note: navigation is file-level — it brings the next
+// matching file to the top rather than scrolling to each individual line.
+function DiffFindBar({
+  query,
+  matches,
+  idx,
+  onQuery,
+  onStep,
+  onClose,
+}: {
+  query: string;
+  matches: DiffSearchMatch[];
+  idx: number;
+  onQuery: (q: string) => void;
+  onStep: (dir: number) => void;
+  onClose: () => void;
+}): JSX.Element {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  useEffect(() => {
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, []);
+  const totalMatches = matches.reduce((a, m) => a + m.count, 0);
+  const hasQuery = query.trim().length > 0;
+  return (
+    <div className="diff-find">
+      <input
+        ref={inputRef}
+        type="text"
+        className="diff-find-input"
+        value={query}
+        placeholder="Find in diff…"
+        spellCheck={false}
+        onChange={(e) => onQuery(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            onStep(e.shiftKey ? -1 : 1);
+          } else if (e.key === 'Escape') {
+            e.preventDefault();
+            onClose();
+          }
+        }}
+      />
+      <span className="diff-find-count">
+        {hasQuery
+          ? matches.length > 0
+            ? `${idx + 1}/${matches.length} file${matches.length === 1 ? '' : 's'} · ${totalMatches} match${totalMatches === 1 ? '' : 'es'}`
+            : 'No matches'
+          : ''}
+      </span>
+      <button
+        type="button"
+        className="ghost icon"
+        onClick={() => onStep(-1)}
+        disabled={matches.length === 0}
+        aria-label="Previous matching file"
+        title="Previous file (Shift+Enter)"
+      >
+        <ChevronUp size={14} />
+      </button>
+      <button
+        type="button"
+        className="ghost icon"
+        onClick={() => onStep(1)}
+        disabled={matches.length === 0}
+        aria-label="Next matching file"
+        title="Next file (Enter)"
+      >
+        <ChevronDown size={14} />
+      </button>
+      <button
+        type="button"
+        className="ghost icon"
+        onClick={onClose}
+        aria-label="Close find"
+        title="Close (Esc)"
+      >
+        <X size={14} />
+      </button>
     </div>
   );
 }
@@ -1007,13 +1643,63 @@ function Toolbar({
 }): JSX.Element {
   const isOpen = detail?.status === 'OPEN';
   const isMerged = detail?.mergeState === 'MERGED';
-  const canMerge = isOpen && mergeability?.state === 'mergeable';
-  const canEdit = isOpen;
-  const canClose = isOpen && !isMerged;
-  const canReopen = detail?.status === 'CLOSED' && !isMerged;
   const busyAny = actionBusy !== null;
   const approvedCount =
     approval?.states.filter((s) => s.approvalState === 'APPROVE').length ?? 0;
+  const requiredApprovals =
+    detail?.requiredApprovalCount ?? pr.requiredApprovalCount ?? 0;
+
+  // Approval gating for the smart primary action. We trust the rollup
+  // approvalState (NOT_APPROVED is the only state that should surface Approve).
+  // CodeCommit rejects an author approving their own PR, and a user can't
+  // approve twice — so neither the author nor someone who already approved is
+  // offered Approve; for them an unsatisfied PR shows a disabled Merge that
+  // explains it's awaiting others.
+  const isAuthor =
+    !!approval?.selfArn &&
+    !!detail?.authorArn &&
+    approval.selfArn === detail.authorArn;
+  const selfApproved = !!approval?.selfApproved;
+  // Only an explicit APPROVED / NO_RULES counts as satisfied. UNKNOWN (a failed
+  // or throttled approval evaluation) must NOT green-light Merge — CodeCommit
+  // would reject it server-side, and dangling a confident Merge on a PR whose
+  // approval state we couldn't read is misleading.
+  const approvalUnknown = detail?.approvalState === 'UNKNOWN';
+  const rulesSatisfied = detail
+    ? detail.approvalState === 'APPROVED' || detail.approvalState === 'NO_RULES'
+    : false;
+  const mergeable = mergeability?.state === 'mergeable';
+  const mergeEnabled = !!isOpen && !isMerged && rulesSatisfied && mergeable;
+  const mergeDisabledReason =
+    !isOpen || isMerged
+      ? undefined
+      : approvalUnknown
+        ? 'Approval status unavailable'
+        : !rulesSatisfied
+          ? 'Awaiting required approvals'
+          : !mergeable
+            ? mergeability?.state === 'has_conflicts'
+              ? 'Resolve merge conflicts first'
+              : (mergeability?.reason ?? 'Not mergeable yet')
+            : undefined;
+
+  const canApprove = !!isOpen && !isMerged && !isAuthor && !selfApproved;
+  const canRevoke = !!isOpen && selfApproved;
+  const canMergeAction = !!isOpen && !isMerged;
+  const canEdit = !!isOpen;
+  const canClose = !!isOpen && !isMerged;
+  const canReopen = detail?.status === 'CLOSED' && !isMerged;
+
+  // The single highlighted action: Approve when the PR still needs this user's
+  // approval, otherwise Merge (enabled only when satisfied + mergeable; shown
+  // disabled-with-reason while it isn't, so the button always communicates the
+  // next step instead of dangling a green Merge on an unapproved PR).
+  const primaryAction: 'approve' | 'merge' | null =
+    detail && isOpen && !isMerged
+      ? !rulesSatisfied && canApprove
+        ? 'approve'
+        : 'merge'
+      : null;
 
   // Status: a single inline pill summarizing the PR's lifecycle state. The
   // detailed view lives in PRMetadata; the toolbar pill is for at-a-glance
@@ -1043,10 +1729,20 @@ function Toolbar({
       </span>
       {statusKind && <Pill kind={statusKind} />}
       {approvalKind && <Pill kind={approvalKind} />}
-      {approval && approvedCount > 0 && (
-        <span className="pr-toolbar-count" title={`${approvedCount} approval${approvedCount === 1 ? '' : 's'}`}>
+      {(approvedCount > 0 || requiredApprovals > 0) && (
+        <span
+          className="pr-toolbar-count"
+          title={
+            requiredApprovals > 0
+              ? `${approvedCount} of ${requiredApprovals} required approval${requiredApprovals === 1 ? '' : 's'}`
+              : `${approvedCount} approval${approvedCount === 1 ? '' : 's'}`
+          }
+        >
           <Check size={12} />
-          <span>{approvedCount}</span>
+          <span>
+            {approvedCount}
+            {requiredApprovals > 0 ? `/${requiredApprovals}` : ''}
+          </span>
         </span>
       )}
       <span className="grow" />
@@ -1079,23 +1775,44 @@ function Toolbar({
         </button>
       )}
       <OverflowMenu
+        canApprove={canApprove}
+        canRevoke={canRevoke}
+        canMerge={canMergeAction}
+        mergeEnabled={mergeEnabled}
+        mergeDisabledReason={mergeDisabledReason}
         canEdit={canEdit}
         canClose={canClose}
         canReopen={canReopen}
         busyAny={busyAny}
         actionBusy={actionBusy}
-        selfApproved={!!approval?.selfApproved}
         approvalBusy={approvalBusy}
+        onApprove={onApprove}
+        onRevoke={onRevoke}
+        onMerge={onMerge}
         onEdit={onEdit}
         onClose={onClose}
         onReopen={onReopen}
-        onApprove={onApprove}
-        onRevoke={onRevoke}
         onOpenInAws={onOpenInAws}
         hasWebUrl={hasWebUrl}
       />
-      {canMerge && (
-        <button className="primary" onClick={onMerge} disabled={busyAny}>
+      {primaryAction === 'approve' && (
+        <button
+          className="primary"
+          onClick={onApprove}
+          disabled={approvalBusy}
+          title="Approve this pull request"
+        >
+          <CheckCircle size={14} />
+          <span>{approvalBusy ? 'Approving…' : 'Approve'}</span>
+        </button>
+      )}
+      {primaryAction === 'merge' && (
+        <button
+          className="primary"
+          onClick={onMerge}
+          disabled={busyAny || !mergeEnabled}
+          title={mergeDisabledReason ?? 'Merge this pull request'}
+        >
           <GitMerge size={14} />
           <span>{actionBusy === 'merge' ? 'Merging…' : 'Merge'}</span>
         </button>
@@ -1131,37 +1848,48 @@ function Pill({ kind }: { kind: StatusKind }): JSX.Element {
   return <span className={`pill pill-${kind}`}>{label}</span>;
 }
 
-/* Overflow menu — gathers every low-frequency action (Edit, Close/Reopen,
- * Approve/Revoke, Open in AWS) behind a single ⋯ button. The toolbar
- * stays at ~5 visible buttons across all PR states. */
+/* Overflow menu — lists every action (Approve/Revoke, Merge, Edit,
+ * Close/Reopen, Open in AWS) behind a single ⋯ button, so the full action set
+ * is always reachable regardless of which one the toolbar surfaces as the
+ * highlighted primary. The toolbar itself stays at ~5 visible buttons. */
 function OverflowMenu({
+  canApprove,
+  canRevoke,
+  canMerge,
+  mergeEnabled,
+  mergeDisabledReason,
   canEdit,
   canClose,
   canReopen,
   busyAny,
   actionBusy,
-  selfApproved,
   approvalBusy,
+  onApprove,
+  onRevoke,
+  onMerge,
   onEdit,
   onClose,
   onReopen,
-  onApprove,
-  onRevoke,
   onOpenInAws,
   hasWebUrl,
 }: {
+  canApprove: boolean;
+  canRevoke: boolean;
+  canMerge: boolean;
+  mergeEnabled: boolean;
+  mergeDisabledReason?: string;
   canEdit: boolean;
   canClose: boolean;
   canReopen: boolean;
   busyAny: boolean;
   actionBusy: null | 'merge' | 'status' | 'edit';
-  selfApproved: boolean;
   approvalBusy: boolean;
+  onApprove: () => void;
+  onRevoke: () => void;
+  onMerge: () => void;
   onEdit: () => void;
   onClose: () => void;
   onReopen: () => void;
-  onApprove: () => void;
-  onRevoke: () => void;
   onOpenInAws: () => void;
   hasWebUrl: boolean;
 }): JSX.Element {
@@ -1187,7 +1915,15 @@ function OverflowMenu({
 
   // Don't render the trigger if every item would be hidden — keep the
   // toolbar clean when the PR is in a state with no overflow actions.
-  if (!canEdit && !canClose && !canReopen && !selfApproved && !hasWebUrl) {
+  if (
+    !canApprove &&
+    !canRevoke &&
+    !canMerge &&
+    !canEdit &&
+    !canClose &&
+    !canReopen &&
+    !hasWebUrl
+  ) {
     return <></>;
   }
 
@@ -1204,21 +1940,7 @@ function OverflowMenu({
       </button>
       {open && (
         <div className="overflow-menu-popup" role="menu">
-          {canEdit && (
-            <button
-              className="overflow-item"
-              role="menuitem"
-              disabled={busyAny}
-              onClick={() => {
-                setOpen(false);
-                onEdit();
-              }}
-            >
-              <Edit3 size={14} />
-              <span>Edit title & description</span>
-            </button>
-          )}
-          {selfApproved ? (
+          {canRevoke && (
             <button
               className="overflow-item"
               role="menuitem"
@@ -1231,7 +1953,8 @@ function OverflowMenu({
               <XCircle size={14} />
               <span>{approvalBusy ? 'Revoking…' : 'Revoke approval'}</span>
             </button>
-          ) : (
+          )}
+          {canApprove && (
             <button
               className="overflow-item"
               role="menuitem"
@@ -1243,6 +1966,35 @@ function OverflowMenu({
             >
               <CheckCircle size={14} />
               <span>{approvalBusy ? 'Approving…' : 'Approve'}</span>
+            </button>
+          )}
+          {canMerge && (
+            <button
+              className="overflow-item"
+              role="menuitem"
+              disabled={busyAny || !mergeEnabled}
+              title={mergeDisabledReason}
+              onClick={() => {
+                setOpen(false);
+                onMerge();
+              }}
+            >
+              <GitMerge size={14} />
+              <span>{actionBusy === 'merge' ? 'Merging…' : 'Merge…'}</span>
+            </button>
+          )}
+          {canEdit && (
+            <button
+              className="overflow-item"
+              role="menuitem"
+              disabled={busyAny}
+              onClick={() => {
+                setOpen(false);
+                onEdit();
+              }}
+            >
+              <Edit3 size={14} />
+              <span>Edit title & description</span>
             </button>
           )}
           {canClose && (

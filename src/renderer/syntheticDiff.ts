@@ -3,6 +3,7 @@ import type {
   DiffLine,
   FileDiff,
   FileDiffEntry,
+  FileDiffOptions,
   PRDifferences,
 } from '@shared/types';
 import { api, unwrap } from './api';
@@ -118,7 +119,7 @@ export function syntheticFileDiff(entry: FileDiffEntry): FileDiff {
 export function loadFileDiff(
   repositoryName: string,
   entry: FileDiffEntry,
-  opts?: { forceFresh?: boolean },
+  opts?: FileDiffOptions,
 ): Promise<FileDiff> {
   if (isSyntheticBlob(entry.afterBlobId) || isSyntheticBlob(entry.beforeBlobId)) {
     return Promise.resolve(syntheticFileDiff(entry));

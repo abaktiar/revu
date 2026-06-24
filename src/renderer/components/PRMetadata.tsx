@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type {
+  ApprovalRuleView,
   ApprovalStateEntry,
   PRDifferences,
   PullRequestApprovalView,
@@ -81,9 +82,9 @@ export function PRMetadata({
 
       <div className="pr-meta-row">
         <span className="pr-meta-label">Status</span>
-        <span className={`pill ${detail.status.toLowerCase()}`}>{detail.status}</span>
+        <span className={`pill pill-${detail.status.toLowerCase()}`}>{detail.status}</span>
         {mergeability && <MergeabilityBadge m={mergeability} />}
-        <span className={`pill ${detail.approvalState.toLowerCase()}`}>
+        <span className={`pill pill-${detail.approvalState.toLowerCase()}`}>
           {detail.approvalState.replace('_', ' ')}
         </span>
         <span className="hint">
@@ -198,6 +199,29 @@ export function PRMetadata({
         </div>
       )}
 
+      {approval?.rules && approval.rules.length > 0 && (
+        <div className="pr-meta-row pr-rules-row">
+          <span className="pr-meta-label">Approval rules</span>
+          <ul className="pr-rules">
+            {approval.rules.map((r) => (
+              <ApprovalRuleChip
+                key={r.name}
+                rule={r}
+                overridden={approval.overridden ?? false}
+              />
+            ))}
+          </ul>
+          {approval.overridden && (
+            <span
+              className="pr-rule-overridden"
+              title="An admin overrode the approval rules; they no longer need to be met."
+            >
+              overridden
+            </span>
+          )}
+        </div>
+      )}
+
       {approvers.length > 0 && (
         <div className="pr-meta-row pr-approvers-row">
           <span className="pr-meta-label">Approved by</span>
@@ -231,6 +255,43 @@ export function PRMetadata({
         </div>
       )}
     </div>
+  );
+}
+
+function ApprovalRuleChip({
+  rule,
+  overridden,
+}: {
+  rule: ApprovalRuleView;
+  overridden: boolean;
+}): JSX.Element {
+  const met = rule.satisfied || overridden;
+  const poolTitle =
+    rule.approverPool.length > 0
+      ? `Can approve:\n  ${rule.approverPool.join('\n  ')}`
+      : 'Anyone can approve';
+  return (
+    <li className={`pr-rule${met ? ' is-met' : ''}`} title={poolTitle}>
+      <span className="pr-rule-check" aria-hidden="true">
+        {met ? <Check size={12} /> : <span className="pr-rule-dot" />}
+      </span>
+      <span className="pr-rule-name">{rule.name}</span>
+      <span className="pr-rule-count" aria-label={`${rule.currentCount} of ${rule.requiredCount} approvals`}>
+        {rule.currentCount} of {rule.requiredCount}
+      </span>
+      {rule.isTemplate && (
+        <span
+          className="pr-rule-template"
+          title={
+            rule.templateName
+              ? `From approval rule template "${rule.templateName}"`
+              : 'From an approval rule template'
+          }
+        >
+          template
+        </span>
+      )}
+    </li>
   );
 }
 
@@ -287,7 +348,7 @@ function MergeabilityBadge({
           (m.mergeCommitId ? ` (${m.mergeCommitId.slice(0, 7)})` : '')
         : 'Merged';
       return (
-        <span className="pill merged" title={title}>
+        <span className="pill pill-merged" title={title}>
           <GitMerge size={11} />
           MERGED
         </span>
@@ -296,7 +357,7 @@ function MergeabilityBadge({
     case 'mergeable': {
       const title = `Mergeable via: ${m.mergeOptions.join(', ') || '?'}`;
       return (
-        <span className="pill approved" title={title}>
+        <span className="pill pill-approved" title={title}>
           MERGEABLE
         </span>
       );
@@ -312,7 +373,7 @@ function MergeabilityBadge({
         : (m.reason ?? 'Manual merge required');
       const label = count > 0 ? `CONFLICTS (${count})` : 'CONFLICTS';
       return (
-        <span className="pill not_approved" title={title}>
+        <span className="pill pill-not_approved" title={title}>
           {label}
         </span>
       );
@@ -321,7 +382,7 @@ function MergeabilityBadge({
     default:
       return (
         <span
-          className="pill unknown"
+          className="pill pill-unknown"
           title={m.reason ?? "Mergeability couldn't be determined"}
         >
           UNKNOWN

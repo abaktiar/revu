@@ -1,10 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
-import type { MergeOptionId, PullRequestMergeability } from '@shared/types';
+import type {
+  ChecklistItem,
+  MergeOptionId,
+  PullRequestMergeability,
+} from '@shared/types';
 import { ErrorBanner } from './ErrorBanner';
 
 // Shared modal shell: dim backdrop, centered card, Esc to cancel, focus trap to
-// the card. Used by the merge + edit dialogs.
-function Modal({
+// the card. Used by the merge + edit + approve-checklist dialogs.
+export function Modal({
   title,
   onClose,
   children,
@@ -131,6 +135,81 @@ export function MergeDialog({
           onClick={() => onMerge(strategy, message)}
         >
           {busy ? 'Merging…' : 'Merge'}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+// Shown when approving a PR in a repo that has an approval checklist. The gate
+// is advisory (warn-but-allow): unchecked required items are flagged but never
+// block Approve. The set of checked items is handed back so the caller can
+// record the acknowledgement in the PR description.
+export function ChecklistApproveModal({
+  items,
+  busy,
+  error,
+  onCancel,
+  onApprove,
+}: {
+  items: ChecklistItem[];
+  busy: boolean;
+  error?: unknown;
+  onCancel: () => void;
+  onApprove: (checked: Record<string, boolean>) => void;
+}): JSX.Element {
+  const [checked, setChecked] = useState<Record<string, boolean>>({});
+  const toggle = (id: string): void =>
+    setChecked((c) => ({ ...c, [id]: !c[id] }));
+  const uncheckedRequired = items.filter((i) => i.required && !checked[i.id]);
+
+  return (
+    <Modal title="Approve pull request" onClose={onCancel}>
+      <div className="pr-dialog-body">
+        <p className="hint">
+          Confirm this repository&rsquo;s review checklist. Your checked items
+          are recorded in the PR description. Approving is never blocked —
+          unchecked items are just a reminder.
+        </p>
+        <ul className="approve-checklist">
+          {items.map((it) => (
+            <li
+              key={it.id}
+              className={`approve-checklist-item${it.required ? ' is-required' : ''}`}
+            >
+              <label>
+                <input
+                  type="checkbox"
+                  checked={!!checked[it.id]}
+                  onChange={() => toggle(it.id)}
+                />
+                <span className="approve-checklist-text">{it.text}</span>
+                {it.required && (
+                  <span className="approve-required-tag">required</span>
+                )}
+              </label>
+            </li>
+          ))}
+        </ul>
+        {uncheckedRequired.length > 0 && (
+          <div className="approve-checklist-warn">
+            {uncheckedRequired.length} required item
+            {uncheckedRequired.length === 1 ? '' : 's'} still unchecked — you can
+            still approve.
+          </div>
+        )}
+      </div>
+      {error != null && <ErrorBanner title="Approve failed." error={error} />}
+      <div className="pr-dialog-actions">
+        <button onClick={onCancel} disabled={busy}>
+          Cancel
+        </button>
+        <button
+          className="primary"
+          disabled={busy}
+          onClick={() => onApprove(checked)}
+        >
+          {busy ? 'Approving…' : 'Approve'}
         </button>
       </div>
     </Modal>
